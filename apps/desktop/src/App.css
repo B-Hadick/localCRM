@@ -1,0 +1,16 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f6f8;
+}
+
+.app-shell {
+  padding: 20px;
+}
+
+.status-banner {
+  margin: 10px 0;
+  padding: 10px;
+  background: #e8f1fb;
+  border-radius: 6px;
+}

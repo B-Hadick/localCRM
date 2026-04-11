@@ -1,0 +1,25 @@
+{
+  "name": "LocalCRM Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspaces/localCRM",
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  "forwardPorts": [5173, 8080, 5432],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+}

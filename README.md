@@ -1,34 +1,55 @@
-# LocalCRM
+# LocalCRM — Full-Stack CRM System
 
-LocalCRM is a local-first desktop CRM system designed for small teams that need shared customer management, contracts, and internal workflows without relying on cloud infrastructure.
+LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.  
 
-## Architecture
-
-- Desktop App: Electron + React + TypeScript
-- Backend API: ASP.NET Core (.NET 8)
-- Database: PostgreSQL
-- Environment: GitHub Codespaces (dev), local host deployment (prod)
-
-## Key Features (Planned)
-
-- Customer & contact management
-- Notes and activity tracking
-- Quotes → contracts workflow
-- Audit logging
-- Local-first architecture (LAN-based)
-
-## Phase 1 Scope
-
-- Authentication (Admin / Staff)
-- Customer CRUD
-- Customer notes
-- Audit logging
-- Desktop + API integration
-
-## Status
-
-🚧 In active development — Phase 1 bootstrap
+This project demonstrates end-to-end system design, including API development, database integration, frontend interaction, and containerized development environments.
 
 ---
 
-Built as a developer portfolio project demonstrating full-stack system design, observability, and business workflow modeling.
+## 🚀 Tech Stack
+
+### Backend
+- ASP.NET Core (C#)
+- Entity Framework Core
+- PostgreSQL
+- REST API design
+
+### Frontend
+- React (TypeScript)
+- Vite
+- Electron (desktop client)
+
+### Infrastructure
+- Docker (PostgreSQL container)
+- Dev Containers (GitHub Codespaces-ready)
+
+---
+
+## 📦 Features
+
+- Create and retrieve customer records
+- RESTful API endpoints:
+  - `GET /health`
+  - `GET /customers`
+  - `POST /customers`
+- Database migrations with EF Core
+- Desktop UI for interacting with API
+- Containerized development environment
+
+---
+
+## 🧠 What This Project Demonstrates
+
+- Full-stack application architecture
+- API ↔ database ↔ frontend integration
+- Debugging across multiple systems (TypeScript, .NET, Docker)
+- Entity Framework migrations and schema management
+- Real-world development workflow inside containerized environments
+
+---
+
+## ⚙️ Running the Project
+
+### 1. Start database
+```bash
+docker compose -f .devcontainer/docker-compose.yml up -d postgres
