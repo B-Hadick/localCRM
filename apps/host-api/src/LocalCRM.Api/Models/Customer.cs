@@ -15,4 +15,5 @@ public class Customer
     public string Status { get; set; } = "Active";
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    
 }
