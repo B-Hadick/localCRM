@@ -44,6 +44,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Ready");
 
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
   const [form, setForm] = useState({
     name: "",
     type: "Company",
@@ -73,6 +76,21 @@ function App() {
   const [noteForm, setNoteForm] = useState({
     content: "",
     isPinned: false
+  });
+
+  const filteredCustomers = customers.filter((customer) => {
+    const search = searchTerm.toLowerCase();
+
+    const matchesSearch =
+      customer.name.toLowerCase().includes(search) ||
+      customer.email.toLowerCase().includes(search) ||
+      customer.phone.toLowerCase().includes(search) ||
+      customer.type.toLowerCase().includes(search);
+
+    const matchesStatus =
+      statusFilter === "All" || customer.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
   });
 
   async function loadCustomers() {
@@ -297,7 +315,7 @@ function App() {
     <div className="app-shell">
       <header className="page-header">
         <h1>LocalCRM</h1>
-        <p>Phase 2: customer detail, notes, and audit activity</p>
+        <p>Phase 3: search, filtering, customer detail, notes, and audit activity</p>
       </header>
 
       <div className="status-banner">{statusMessage}</div>
@@ -309,6 +327,28 @@ function App() {
             <button type="button" onClick={loadCustomers} disabled={loading}>
               {loading ? "Loading..." : "Refresh"}
             </button>
+          </div>
+
+          <div className="toolbar">
+            <input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search customers..."
+            />
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="All">All Statuses</option>
+              <option value="Active">Active</option>
+              <option value="Lead">Lead</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+
+          <div className="result-count">
+            Showing {filteredCustomers.length} of {customers.length} customers
           </div>
 
           <div className="table-wrap">
@@ -323,12 +363,12 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {customers.length === 0 ? (
+                {filteredCustomers.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>No customers found</td>
+                    <td colSpan={5}>No matching customers found</td>
                   </tr>
                 ) : (
-                  customers.map((customer) => (
+                  filteredCustomers.map((customer) => (
                     <tr
                       key={customer.id}
                       className={selectedCustomer?.id === customer.id ? "selected-row" : ""}
