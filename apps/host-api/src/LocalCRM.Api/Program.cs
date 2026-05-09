@@ -122,6 +122,12 @@ app.MapGet("/customers", async (LocalCrmDbContext db, ILogger<Program> logger) =
     return Results.Ok(customers);
 });
 
+app.MapGet("/customers/{id:guid}", async (Guid id, LocalCrmDbContext db) =>
+{
+    var customer = await db.Customers.FindAsync(id);
+    return customer is null ? Results.NotFound(new { error = "Customer not found" }) : Results.Ok(customer);
+});
+
 app.MapPost("/customers", async (Customer input, LocalCrmDbContext db, ILogger<Program> logger) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name))
@@ -171,6 +177,59 @@ app.MapGet("/customers/{customerId:guid}/notes", async (Guid customerId, LocalCr
         .ToListAsync();
 
     return Results.Ok(notes);
+});
+
+app.MapPut("/customers/{id:guid}", async (Guid id, Customer input, LocalCrmDbContext db, ILogger<Program> logger) =>
+{
+    var customer = await db.Customers.FindAsync(id);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Name))
+    {
+        return Results.BadRequest(new { error = "Name is required" });
+    }
+
+    if (delayMs > 0)
+    {
+        await Task.Delay(delayMs);
+    }
+
+    if (forceError)
+    {
+        throw new Exception("Simulated failure triggered");
+    }
+
+    customer.Name = input.Name;
+    customer.Type = input.Type;
+    customer.Email = input.Email;
+    customer.Phone = input.Phone;
+    customer.AddressLine1 = input.AddressLine1;
+    customer.AddressLine2 = input.AddressLine2;
+    customer.City = input.City;
+    customer.State = input.State;
+    customer.PostalCode = input.PostalCode;
+    customer.Status = input.Status;
+    customer.UpdatedAtUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Customer",
+        EntityId = customer.Id.ToString(),
+        Action = "Updated",
+        Details = $"Customer '{customer.Name}' updated.",
+        PerformedBy = "system",
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    logger.LogInformation("Updating customer {CustomerId}", customer.Id);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(customer);
 });
 
 app.MapPost("/customers/{customerId:guid}/notes", async (Guid customerId, CustomerNote input, LocalCrmDbContext db, ILogger<Program> logger) =>

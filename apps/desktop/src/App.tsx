@@ -57,6 +57,19 @@ function App() {
     status: "Active"
   });
 
+  const [editForm, setEditForm] = useState({
+    name: "",
+    type: "Company",
+    email: "",
+    phone: "",
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    state: "",
+    postalCode: "",
+    status: "Active"
+  });
+
   const [noteForm, setNoteForm] = useState({
     content: "",
     isPinned: false
@@ -76,8 +89,15 @@ function App() {
       setCustomers(data);
       setStatusMessage(`Loaded ${data.length} customers`);
 
-      if (data.length > 0 && !selectedCustomer) {
-        setSelectedCustomer(data[0]);
+      if (data.length > 0) {
+        if (selectedCustomer) {
+          const refreshedSelected = data.find((customer) => customer.id === selectedCustomer.id);
+          if (refreshedSelected) {
+            setSelectedCustomer(refreshedSelected);
+          }
+        } else {
+          setSelectedCustomer(data[0]);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -102,20 +122,20 @@ function App() {
     }
   }
 
- async function loadAuditLogs(customerId: string) {
-  try {
-    const response = await fetch(`/customers/${customerId}/audit`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+  async function loadAuditLogs(customerId: string) {
+    try {
+      const response = await fetch(`/customers/${customerId}/audit`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-    const data = (await response.json()) as AuditLog[];
-    setAuditLogs(data);
-  } catch (error) {
-    console.error(error);
-    setStatusMessage("Failed to load audit log");
+      const data = (await response.json()) as AuditLog[];
+      setAuditLogs(data);
+    } catch (error) {
+      console.error(error);
+      setStatusMessage("Failed to load audit log");
+    }
   }
-}
 
   useEffect(() => {
     loadCustomers();
@@ -123,6 +143,19 @@ function App() {
 
   useEffect(() => {
     if (selectedCustomer) {
+      setEditForm({
+        name: selectedCustomer.name,
+        type: selectedCustomer.type,
+        email: selectedCustomer.email,
+        phone: selectedCustomer.phone,
+        addressLine1: selectedCustomer.addressLine1,
+        addressLine2: selectedCustomer.addressLine2,
+        city: selectedCustomer.city,
+        state: selectedCustomer.state,
+        postalCode: selectedCustomer.postalCode,
+        status: selectedCustomer.status
+      });
+
       loadCustomerNotes(selectedCustomer.id);
       loadAuditLogs(selectedCustomer.id);
     }
@@ -172,6 +205,49 @@ function App() {
     } catch (error) {
       console.error(error);
       setStatusMessage("Failed to create customer");
+    }
+  }
+
+  async function handleCustomerUpdate(event: FormEvent) {
+    event.preventDefault();
+
+    if (!selectedCustomer) {
+      setStatusMessage("Select a customer first");
+      return;
+    }
+
+    if (!editForm.name.trim()) {
+      setStatusMessage("Customer name is required");
+      return;
+    }
+
+    setStatusMessage("Saving customer changes...");
+
+    try {
+      const response = await fetch(`/customers/${selectedCustomer.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          ...selectedCustomer,
+          ...editForm
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const updatedCustomer = (await response.json()) as Customer;
+
+      setSelectedCustomer(updatedCustomer);
+      setStatusMessage("Customer updated successfully");
+      await loadCustomers();
+      await loadAuditLogs(updatedCustomer.id);
+    } catch (error) {
+      console.error(error);
+      setStatusMessage("Failed to update customer");
     }
   }
 
@@ -336,15 +412,75 @@ function App() {
         <section className="detail-grid">
           <section className="card">
             <h2>Customer Detail</h2>
-            <div className="detail-list">
-              <div><strong>Name:</strong> {selectedCustomer.name}</div>
-              <div><strong>Type:</strong> {selectedCustomer.type}</div>
-              <div><strong>Email:</strong> {selectedCustomer.email || "—"}</div>
-              <div><strong>Phone:</strong> {selectedCustomer.phone || "—"}</div>
-              <div><strong>Status:</strong> {selectedCustomer.status}</div>
-              <div><strong>City:</strong> {selectedCustomer.city || "—"}</div>
-              <div><strong>State:</strong> {selectedCustomer.state || "—"}</div>
-            </div>
+
+            <form className="customer-form" onSubmit={handleCustomerUpdate}>
+              <label>
+                Name
+                <input
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                />
+              </label>
+
+              <label>
+                Type
+                <select
+                  value={editForm.type}
+                  onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
+                >
+                  <option value="Company">Company</option>
+                  <option value="Person">Person</option>
+                </select>
+              </label>
+
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                />
+              </label>
+
+              <label>
+                Phone
+                <input
+                  type="tel"
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                />
+              </label>
+
+              <label>
+                City
+                <input
+                  value={editForm.city}
+                  onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                />
+              </label>
+
+              <label>
+                State
+                <input
+                  value={editForm.state}
+                  onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
+                />
+              </label>
+
+              <label>
+                Status
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                >
+                  <option value="Active">Active</option>
+                  <option value="Lead">Lead</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </label>
+
+              <button type="submit">Save Customer</button>
+            </form>
           </section>
 
           <section className="card">
