@@ -1,4 +1,5 @@
 using LocalCRM.Api.Models;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace LocalCRM.Api.Data;
@@ -7,28 +8,37 @@ public static class DbSeeder
 {
     public static async Task SeedAsync(LocalCrmDbContext db)
     {
+        var passwordHasher = new PasswordHasher<User>();
+
         if (!await db.Users.AnyAsync())
         {
-            db.Users.AddRange(
-                new User
-                {
-                    Id = Guid.NewGuid(),
-                    Username = "admin",
-                    PasswordHash = "Admin123!",
-                    FullName = "Admin User",
-                    Role = "Admin",
-                    IsActive = true
-                },
-                new User
-                {
-                    Id = Guid.NewGuid(),
-                    Username = "staff",
-                    PasswordHash = "Staff123!",
-                    FullName = "Staff User",
-                    Role = "Staff",
-                    IsActive = true
-                }
-            );
+            var adminUser = new User
+            {
+                Id = Guid.NewGuid(),
+                DisplayName = "Admin User",
+                Email = "admin@localcrm.dev",
+                Role = "Admin",
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+
+            adminUser.PasswordHash = passwordHasher.HashPassword(adminUser, "Admin123!");
+
+            var staffUser = new User
+            {
+                Id = Guid.NewGuid(),
+                DisplayName = "Staff User",
+                Email = "staff@localcrm.dev",
+                Role = "Staff",
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+
+            staffUser.PasswordHash = passwordHasher.HashPassword(staffUser, "Staff123!");
+
+            db.Users.AddRange(adminUser, staffUser);
         }
 
         if (!await db.Customers.AnyAsync())
@@ -41,10 +51,14 @@ public static class DbSeeder
                     Type = "Company",
                     Email = "contact@acme.example",
                     Phone = "555-0100",
+                    AddressLine1 = "",
+                    AddressLine2 = "",
                     City = "Oklahoma City",
                     State = "OK",
                     PostalCode = "73101",
-                    Status = "Active"
+                    Status = "Active",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
                 },
                 new Customer
                 {
@@ -53,10 +67,14 @@ public static class DbSeeder
                     Type = "Person",
                     Email = "john.smith@example.com",
                     Phone = "555-0101",
+                    AddressLine1 = "",
+                    AddressLine2 = "",
                     City = "Norman",
                     State = "OK",
                     PostalCode = "73069",
-                    Status = "Lead"
+                    Status = "Lead",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
                 }
             );
         }

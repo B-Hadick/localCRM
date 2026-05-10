@@ -21,30 +21,42 @@ public class LocalCrmDbContext : DbContext
         modelBuilder.Entity<User>(entity =>
         {
             entity.HasKey(x => x.Id);
-            entity.HasIndex(x => x.Username).IsUnique();
-            entity.Property(x => x.Username).HasMaxLength(100);
+
+            entity.HasIndex(x => x.Email).IsUnique();
+
+            entity.Property(x => x.DisplayName).HasMaxLength(200);
+            entity.Property(x => x.Email).HasMaxLength(200);
+            entity.Property(x => x.PasswordHash).HasMaxLength(500);
             entity.Property(x => x.Role).HasMaxLength(50);
         });
 
         modelBuilder.Entity<Customer>(entity =>
         {
             entity.HasKey(x => x.Id);
+
             entity.Property(x => x.Name).HasMaxLength(200);
             entity.Property(x => x.Type).HasMaxLength(50);
             entity.Property(x => x.Email).HasMaxLength(200);
             entity.Property(x => x.Phone).HasMaxLength(50);
+            entity.Property(x => x.AddressLine1).HasMaxLength(250);
+            entity.Property(x => x.AddressLine2).HasMaxLength(250);
+            entity.Property(x => x.City).HasMaxLength(100);
+            entity.Property(x => x.State).HasMaxLength(100);
+            entity.Property(x => x.PostalCode).HasMaxLength(50);
             entity.Property(x => x.Status).HasMaxLength(50);
         });
 
         modelBuilder.Entity<CustomerNote>(entity =>
         {
             entity.HasKey(x => x.Id);
+
             entity.Property(x => x.Content).HasMaxLength(4000);
         });
 
         modelBuilder.Entity<AuditLog>(entity =>
         {
             entity.HasKey(x => x.Id);
+
             entity.Property(x => x.EntityType).HasMaxLength(100);
             entity.Property(x => x.EntityId).HasMaxLength(100);
             entity.Property(x => x.Action).HasMaxLength(100);

@@ -2,7 +2,7 @@
 
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
 
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, password hashing, UI state handling, and containerized development environments.
 
 ---
 
@@ -14,6 +14,8 @@ This project demonstrates end-to-end system design, including API development, d
 - PostgreSQL
 - REST API design
 - Backend-backed search/filtering
+- Role-aware backend workflow enforcement
+- Password hashing with ASP.NET Core Identity password hasher
 - Structured console logging
 - JSON error handling middleware
 
@@ -22,6 +24,8 @@ This project demonstrates end-to-end system design, including API development, d
 - TypeScript
 - Vite
 - Electron desktop wrapper
+- Role-aware UI behavior
+- Local session persistence with browser localStorage
 
 ### Infrastructure
 - Docker
@@ -33,13 +37,30 @@ This project demonstrates end-to-end system design, including API development, d
 
 ## 📦 Current Features
 
+### Authentication & Roles
+- Login/logout flow
+- Admin and Staff user roles
+- Persistent signed-in user state across browser refreshes
+- Admin-only Staff user creation
+- Password hashing for seeded and newly created users
+- Legacy development passwords upgrade to hashed passwords after successful login
+
+### Role-Aware Workflow
+- Admin users can create customers
+- Admin users can edit customers
+- Admin users can create Staff users
+- Staff users can create customers
+- Staff users can view/search customers
+- Staff users can view customer notes and audit activity
+- Staff users cannot edit customer records
+- Backend enforces Admin-only customer edits
+
 ### Customer Management
 - Create customer records
 - Retrieve customer records
 - Select customer from list
 - View customer details
-- Edit customer profile fields
-- Save customer updates
+- Edit customer profile fields as Admin
 - Store customer contact and address details
 - Persist customer changes in PostgreSQL
 
@@ -62,6 +83,7 @@ This project demonstrates end-to-end system design, including API development, d
 - Audit entries for customer creation
 - Audit entries for customer updates
 - Audit entries for note creation
+- User-aware audit activity using the current signed-in user
 - Customer-specific audit activity panel
 - Compact audit display with activity counts
 
@@ -71,7 +93,7 @@ This project demonstrates end-to-end system design, including API development, d
 - No-results messaging for search/filter combinations
 - API failure messaging
 - Selected-customer fallback when filtered results change
-- Clear validation messages for customer and note forms
+- Clear validation messages for customer, note, login, and Staff user forms
 
 ### Backend Reliability Features
 - Backend health check
@@ -85,6 +107,12 @@ This project demonstrates end-to-end system design, including API development, d
 
 ### Health
 - `GET /health`
+
+### Auth
+- `POST /auth/login`
+
+### Users
+- `POST /users/staff`
 
 ### Customers
 - `GET /customers`
@@ -114,6 +142,9 @@ This project demonstrates end-to-end system design, including API development, d
 - Customer workflow modeling
 - Notes and activity tracking
 - Audit logging patterns
+- Role-aware frontend behavior
+- Backend role enforcement for protected workflows
+- Password hashing and legacy password upgrade flow
 - UI state handling for loading, empty, no-results, and API-failure scenarios
 - Client-facing form validation
 - Debugging across TypeScript, .NET, Docker, and database layers
@@ -219,6 +250,69 @@ Phase 3 improved customer list usability, backend search behavior, frontend stat
 11. Confirm notes and audit activity still load correctly.
 12. Confirm empty/no-results/error states display cleanly.
 13. Confirm the UI remains client-facing without debug controls.
+
+---
+
+## ✅ Phase 4A — Completed
+
+Phase 4A added the authentication and role-aware workflow foundation.
+
+### Implemented
+- User model updated for auth-ready fields
+- Admin and Staff roles
+- Seeded development Admin and Staff users
+- Login endpoint
+- Frontend login screen
+- Logout flow
+- Signed-in user display in app header
+- Session persistence across browser refreshes
+- Admin-only Staff user creation
+- Staff user creation backend route
+- Frontend role-aware behavior
+- Staff can create customers
+- Staff cannot edit customers
+- Admin can edit customers
+- Backend Admin-only enforcement for customer edits
+- User-aware audit entries
+- Password hashing using ASP.NET Core Identity password hasher
+- Automatic upgrade path for legacy development password rows after successful login
+- Vite proxy support for auth, users, customers, audit, and health routes
+
+### Verified Flow
+1. Sign in as seeded Admin.
+2. Confirm Admin can create customers.
+3. Confirm Admin can edit customers.
+4. Confirm Admin can create Staff users.
+5. Sign out.
+6. Sign in as seeded Staff.
+7. Confirm Staff can create customers.
+8. Confirm Staff can view/search customers.
+9. Confirm Staff can view notes and audit activity.
+10. Confirm Staff cannot edit customer records.
+11. Confirm direct backend Staff edit attempts are rejected.
+12. Confirm audit entries show the signed-in user.
+13. Confirm passwords are hashed after login.
+14. Confirm newly created Staff users can sign in.
+
+---
+
+## ⏳ Phase 4B — Not Started
+
+Phase 4B is the production-grade authentication and authorization hardening pass.
+
+### Planned
+- Replace temporary `X-LocalCRM-User` identity header with real token/session authentication
+- Add authenticated claims
+- Protect API routes using authentication middleware
+- Add authorization policies for Admin and Staff workflows
+- Remove trust in frontend-sent identity headers
+- Add session expiration or token expiration
+- Consider password change/reset workflow
+- Consider Owner/SuperAdmin distinction before allowing Admin-user creation
+- Add audit records for user creation and security-sensitive activity
+
+### Current Limitation
+The current Phase 4A auth layer uses hashed passwords and backend role checks, but the signed-in user identity is still passed from the frontend through a temporary development header. This is suitable for the current development milestone, but it is not production-grade authentication yet.
 
 ---
 
