@@ -481,8 +481,46 @@ app.MapGet("/customers/{customerId:guid}/edit-requests", async (
     return Results.Ok(requests);
 }).RequireAuthorization("AuthenticatedUser");
 
+app.MapGet("/dashboard/summary", async (LocalCrmDbContext db) =>
+{
+    var todayUtc = DateTime.UtcNow.Date;
+    var sevenDaysAgoUtc = DateTime.UtcNow.AddDays(-7);
+
+    var totalCustomers = await db.Customers.CountAsync();
+    var activeCustomers = await db.Customers.CountAsync(c => c.Status == "Active");
+    var leadCustomers = await db.Customers.CountAsync(c => c.Status == "Lead");
+    var inactiveCustomers = await db.Customers.CountAsync(c => c.Status == "Inactive");
+
+    var pendingEditRequests = await db.CustomerEditRequests.CountAsync(r => r.Status == "Pending");
+    var approvedEditRequests = await db.CustomerEditRequests.CountAsync(r => r.Status == "Approved");
+    var rejectedEditRequests = await db.CustomerEditRequests.CountAsync(r => r.Status == "Rejected");
+
+    var editRequestsLast7Days = await db.CustomerEditRequests.CountAsync(r => r.CreatedAtUtc >= sevenDaysAgoUtc);
+    var pendingEditRequestsToday = await db.CustomerEditRequests.CountAsync(r =>
+        r.Status == "Pending" &&
+        r.CreatedAtUtc >= todayUtc);
+
+    var recentAuditEvents = await db.AuditLogs.CountAsync(a => a.CreatedAtUtc >= sevenDaysAgoUtc);
+
+    return Results.Ok(new DashboardSummaryResponse(
+        totalCustomers,
+        activeCustomers,
+        leadCustomers,
+        inactiveCustomers,
+        pendingEditRequests,
+        approvedEditRequests,
+        rejectedEditRequests,
+        editRequestsLast7Days,
+        pendingEditRequestsToday,
+        recentAuditEvents
+    ));
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/customer-edit-requests", async (
     string? status,
+    string? requestedBy,
+    DateTime? from,
+    DateTime? to,
     LocalCrmDbContext db) =>
 {
     var query = db.CustomerEditRequests.AsQueryable();
@@ -490,6 +528,24 @@ app.MapGet("/customer-edit-requests", async (
     if (!string.IsNullOrWhiteSpace(status) && status != "All")
     {
         query = query.Where(r => r.Status == status);
+    }
+
+    if (!string.IsNullOrWhiteSpace(requestedBy))
+    {
+        var requestedBySearch = requestedBy.Trim().ToLower();
+        query = query.Where(r => r.RequestedByEmail.ToLower().Contains(requestedBySearch));
+    }
+
+    if (from.HasValue)
+    {
+        var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        query = query.Where(r => r.CreatedAtUtc >= fromUtc);
+    }
+
+    if (to.HasValue)
+    {
+        var toUtcExclusive = DateTime.SpecifyKind(to.Value.Date.AddDays(1), DateTimeKind.Utc);
+        query = query.Where(r => r.CreatedAtUtc < toUtcExclusive);
     }
 
     var requests = await query
@@ -984,6 +1040,19 @@ public record CustomerSnapshotResponse(
     string PostalCode,
     string Status,
     DateTime UpdatedAtUtc
+);
+
+public record DashboardSummaryResponse(
+    int TotalCustomers,
+    int ActiveCustomers,
+    int LeadCustomers,
+    int InactiveCustomers,
+    int PendingEditRequests,
+    int ApprovedEditRequests,
+    int RejectedEditRequests,
+    int EditRequestsLast7Days,
+    int PendingEditRequestsToday,
+    int RecentAuditEvents
 );
 
 public record PasswordVerificationResultInfo(

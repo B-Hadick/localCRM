@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 type Customer = {
@@ -78,6 +78,19 @@ type CustomerEditRequestReview = CustomerEditRequest & {
   currentCustomer: CustomerSnapshot | null;
 };
 
+type DashboardSummary = {
+  totalCustomers: number;
+  activeCustomers: number;
+  leadCustomers: number;
+  inactiveCustomers: number;
+  pendingEditRequests: number;
+  approvedEditRequests: number;
+  rejectedEditRequests: number;
+  editRequestsLast7Days: number;
+  pendingEditRequestsToday: number;
+  recentAuditEventsLast7Days: number;
+};
+
 type CustomerForm = {
   name: string;
   type: string;
@@ -126,6 +139,19 @@ const emptyStaffUserForm: StaffUserForm = {
   password: ""
 };
 
+const emptyDashboardSummary: DashboardSummary = {
+  totalCustomers: 0,
+  activeCustomers: 0,
+  leadCustomers: 0,
+  inactiveCustomers: 0,
+  pendingEditRequests: 0,
+  approvedEditRequests: 0,
+  rejectedEditRequests: 0,
+  editRequestsLast7Days: 0,
+  pendingEditRequestsToday: 0,
+  recentAuditEventsLast7Days: 0
+};
+
 const AUTH_STORAGE_KEY = "localcrm.currentUser";
 
 function App() {
@@ -141,7 +167,9 @@ function App() {
   const [notes, setNotes] = useState<CustomerNote[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [customerEditRequests, setCustomerEditRequests] = useState<CustomerEditRequest[]>([]);
-  const [pendingEditRequests, setPendingEditRequests] = useState<CustomerEditRequestReview[]>([]);
+  const [requestQueue, setRequestQueue] = useState<CustomerEditRequestReview[]>([]);
+  const [pendingRequestCustomerIds, setPendingRequestCustomerIds] = useState<string[]>([]);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -156,6 +184,9 @@ function App() {
   const [editForm, setEditForm] = useState<CustomerForm>(emptyCustomerForm);
   const [decisionNote, setDecisionNote] = useState("");
   const [requestStatusFilter, setRequestStatusFilter] = useState("Pending");
+  const [requestRequesterFilter, setRequestRequesterFilter] = useState("");
+  const [requestFromDate, setRequestFromDate] = useState("");
+  const [requestToDate, setRequestToDate] = useState("");
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -165,6 +196,11 @@ function App() {
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
 
   const isAdmin = currentUser?.role === "Admin";
+
+  const pendingRequestCustomerIdSet = useMemo(
+    () => new Set(pendingRequestCustomerIds),
+    [pendingRequestCustomerIds]
+  );
 
   function setStatus(message: string, type: "info" | "success" | "error" = "info") {
     setStatusMessage(message);
@@ -330,7 +366,9 @@ function App() {
     setNotes([]);
     setAuditLogs([]);
     setCustomerEditRequests([]);
-    setPendingEditRequests([]);
+    setRequestQueue([]);
+    setPendingRequestCustomerIds([]);
+    setDashboardSummary(emptyDashboardSummary);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -426,7 +464,9 @@ function App() {
     setNotes([]);
     setAuditLogs([]);
     setCustomerEditRequests([]);
-    setPendingEditRequests([]);
+    setRequestQueue([]);
+    setPendingRequestCustomerIds([]);
+    setDashboardSummary(emptyDashboardSummary);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -524,6 +564,34 @@ function App() {
     }
   }
 
+  async function loadDashboardSummary() {
+    if (!currentUser || !isAdmin) {
+      setDashboardSummary(emptyDashboardSummary);
+      return;
+    }
+
+    try {
+      const response = await fetch("/dashboard/summary", {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as DashboardSummary;
+      setDashboardSummary(data);
+    } catch (error) {
+      console.error(error);
+      setDashboardSummary(emptyDashboardSummary);
+      setStatus("Failed to load dashboard summary", "error");
+    }
+  }
+
   async function loadCustomerNotes(customerId: string) {
     if (!currentUser) {
       return;
@@ -600,7 +668,8 @@ function App() {
       setCustomerEditRequests(data);
 
       if (isAdmin) {
-        await loadPendingEditRequests();
+        await loadRequestQueue();
+        await loadPendingCustomerIds();
       }
     } catch (error) {
       console.error(error);
@@ -609,9 +678,9 @@ function App() {
     }
   }
 
-  async function loadPendingEditRequests() {
+  async function loadRequestQueue() {
     if (!currentUser || !isAdmin) {
-      setPendingEditRequests([]);
+      setRequestQueue([]);
       return;
     }
 
@@ -620,6 +689,18 @@ function App() {
 
       if (requestStatusFilter !== "All") {
         params.set("status", requestStatusFilter);
+      }
+
+      if (requestRequesterFilter.trim()) {
+        params.set("requestedBy", requestRequesterFilter.trim());
+      }
+
+      if (requestFromDate) {
+        params.set("from", requestFromDate);
+      }
+
+      if (requestToDate) {
+        params.set("to", requestToDate);
       }
 
       const queryString = params.toString();
@@ -638,12 +719,53 @@ function App() {
       }
 
       const data = (await response.json()) as CustomerEditRequestReview[];
-      setPendingEditRequests(data);
+      setRequestQueue(data);
     } catch (error) {
       console.error(error);
-      setPendingEditRequests([]);
+      setRequestQueue([]);
       setStatus("Failed to load edit requests", "error");
     }
+  }
+
+  async function loadPendingCustomerIds() {
+    if (!currentUser || !isAdmin) {
+      setPendingRequestCustomerIds([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/customer-edit-requests?status=Pending", {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as CustomerEditRequestReview[];
+      const ids = Array.from(new Set(data.map((request) => request.customerId)));
+      setPendingRequestCustomerIds(ids);
+    } catch (error) {
+      console.error(error);
+      setPendingRequestCustomerIds([]);
+      setStatus("Failed to load pending customer indicators", "error");
+    }
+  }
+
+  async function refreshAdminWorkflow() {
+    if (!currentUser || !isAdmin) {
+      return;
+    }
+
+    await Promise.all([
+      loadDashboardSummary(),
+      loadRequestQueue(),
+      loadPendingCustomerIds()
+    ]);
   }
 
   useEffect(() => {
@@ -654,11 +776,13 @@ function App() {
 
   useEffect(() => {
     if (currentUser && isAdmin) {
-      loadPendingEditRequests();
+      refreshAdminWorkflow();
     } else {
-      setPendingEditRequests([]);
+      setRequestQueue([]);
+      setPendingRequestCustomerIds([]);
+      setDashboardSummary(emptyDashboardSummary);
     }
-  }, [currentUser?.id, currentUser?.role, requestStatusFilter]);
+  }, [currentUser?.id, currentUser?.role, requestStatusFilter, requestRequesterFilter, requestFromDate, requestToDate]);
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -710,7 +834,7 @@ function App() {
       await loadCustomers();
 
       if (isAdmin) {
-        await loadPendingEditRequests();
+        await refreshAdminWorkflow();
       }
     } catch (error) {
       console.error(error);
@@ -771,7 +895,7 @@ function App() {
       await loadCustomers();
       await loadAuditLogs(updatedCustomer.id);
       await loadCustomerEditRequests(updatedCustomer.id);
-      await loadPendingEditRequests();
+      await refreshAdminWorkflow();
     } catch (error) {
       console.error(error);
       setStatus("Failed to update customer. Check the API and try again.", "error");
@@ -853,7 +977,7 @@ function App() {
       setDecisionNote("");
       setStatus(`Edit request ${decision === "approve" ? "approved" : "rejected"}.`, "success");
 
-      await loadPendingEditRequests();
+      await refreshAdminWorkflow();
 
       if (selectedCustomer) {
         await loadCustomers();
@@ -970,7 +1094,19 @@ function App() {
     }
   }
 
+  function clearRequestFilters() {
+    setRequestStatusFilter("Pending");
+    setRequestRequesterFilter("");
+    setRequestFromDate("");
+    setRequestToDate("");
+  }
+
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
+  const hasRequestFilters =
+    requestStatusFilter !== "Pending" ||
+    requestRequesterFilter.trim() ||
+    requestFromDate ||
+    requestToDate;
 
   const sortedNotes = [...notes].sort((a, b) => {
     if (a.isPinned !== b.isPinned) {
@@ -1056,6 +1192,40 @@ function App() {
         {statusMessage}
       </div>
 
+      {isAdmin && (
+        <section className="dashboard-grid">
+          <section className="dashboard-card">
+            <span>Total Customers</span>
+            <strong>{dashboardSummary.totalCustomers}</strong>
+          </section>
+
+          <section className="dashboard-card">
+            <span>Active</span>
+            <strong>{dashboardSummary.activeCustomers}</strong>
+          </section>
+
+          <section className="dashboard-card">
+            <span>Leads</span>
+            <strong>{dashboardSummary.leadCustomers}</strong>
+          </section>
+
+          <section className="dashboard-card">
+            <span>Pending Edits</span>
+            <strong>{dashboardSummary.pendingEditRequests}</strong>
+          </section>
+
+          <section className="dashboard-card">
+            <span>Pending Today</span>
+            <strong>{dashboardSummary.pendingEditRequestsToday}</strong>
+          </section>
+
+          <section className="dashboard-card">
+            <span>7-Day Requests</span>
+            <strong>{dashboardSummary.editRequestsLast7Days}</strong>
+          </section>
+        </section>
+      )}
+
       <main className="layout-grid">
         <section className="card">
           <div className="section-header">
@@ -1126,7 +1296,14 @@ function App() {
                       className={selectedCustomer?.id === customer.id ? "selected-row" : ""}
                       onClick={() => setSelectedCustomer(customer)}
                     >
-                      <td>{customer.name}</td>
+                      <td>
+                        <div className="customer-name-cell">
+                          <span>{customer.name}</span>
+                          {pendingRequestCustomerIdSet.has(customer.id) && (
+                            <span className="pending-indicator">Pending Edit</span>
+                          )}
+                        </div>
+                      </td>
                       <td>{customer.type}</td>
                       <td>{customer.email || "—"}</td>
                       <td>{customer.phone || "—"}</td>
@@ -1294,22 +1471,58 @@ function App() {
           <section className="card">
             <div className="section-header compact-header">
               <h2>Edit Requests</h2>
-              <span className="count-chip">{pendingEditRequests.length}</span>
+              <span className="count-chip">{requestQueue.length}</span>
             </div>
 
-            <div className="toolbar request-toolbar">
-              <select
-                value={requestStatusFilter}
-                onChange={(e) => setRequestStatusFilter(e.target.value)}
-              >
-                <option value="Pending">Pending</option>
-                <option value="Approved">Approved</option>
-                <option value="Rejected">Rejected</option>
-                <option value="All">All Requests</option>
-              </select>
+            <div className="request-filter-grid">
+              <label>
+                Status
+                <select
+                  value={requestStatusFilter}
+                  onChange={(e) => setRequestStatusFilter(e.target.value)}
+                >
+                  <option value="Pending">Pending</option>
+                  <option value="Approved">Approved</option>
+                  <option value="Rejected">Rejected</option>
+                  <option value="All">All Requests</option>
+                </select>
+              </label>
 
-              <button type="button" onClick={loadPendingEditRequests}>
-                Refresh Requests
+              <label>
+                Requester
+                <input
+                  value={requestRequesterFilter}
+                  onChange={(e) => setRequestRequesterFilter(e.target.value)}
+                  placeholder="staff@example.com"
+                />
+              </label>
+
+              <label>
+                From
+                <input
+                  type="date"
+                  value={requestFromDate}
+                  onChange={(e) => setRequestFromDate(e.target.value)}
+                />
+              </label>
+
+              <label>
+                To
+                <input
+                  type="date"
+                  value={requestToDate}
+                  onChange={(e) => setRequestToDate(e.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="note-actions-row">
+              <button type="button" onClick={refreshAdminWorkflow}>
+                Refresh Workflow
+              </button>
+
+              <button type="button" onClick={clearRequestFilters} disabled={!hasRequestFilters}>
+                Clear Filters
               </button>
             </div>
 
@@ -1324,10 +1537,10 @@ function App() {
             </label>
 
             <div className="stack-list compact-list">
-              {pendingEditRequests.length === 0 ? (
-                <p className="muted-text">No edit requests match the selected filter.</p>
+              {requestQueue.length === 0 ? (
+                <p className="muted-text">No edit requests match the selected filters.</p>
               ) : (
-                pendingEditRequests.map((request) => {
+                requestQueue.map((request) => {
                   const comparisonRows = getRequestComparisonRows(request);
                   const changedCount = comparisonRows.filter((row) => row.changed).length;
 

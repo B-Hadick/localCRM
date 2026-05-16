@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, approval workflows, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, approval workflows, dashboard reporting, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -14,6 +14,8 @@ Backend-backed search/filtering
 Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
 Current-vs-requested approval review data
+Dashboard summary endpoint
+Request queue filtering by status, requester, and date range
 Password hashing with ASP.NET Core Identity password hasher
 Structured console logging
 JSON error handling middleware
@@ -28,7 +30,9 @@ Staff edit-request submission workflow
 Admin approval/rejection workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
-Edit request status filtering
+Edit request status/requester/date filtering
+Admin dashboard summary cards
+Per-customer pending request indicators
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -60,10 +64,21 @@ Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Admin-only customer edits
 Backend enforces Admin-only Staff user creation
 Backend enforces Admin-only edit-request approval/rejection
+Admin Dashboard
+Dashboard summary cards for operational workflow visibility
+Total customer count
+Active customer count
+Lead customer count
+Pending edit request count
+Pending requests created today
+Edit requests from the last 7 days
+Summary refresh after approval/rejection workflow actions
 Customer Edit Requests
 Staff can submit proposed customer changes for Admin review
 Proposed changes are stored separately from the live customer record
 Admin can view pending, approved, rejected, or all edit requests
+Admin can filter edit requests by requester
+Admin can filter edit requests by date range
 Admin can review current customer values beside requested values
 Changed fields are visually highlighted
 Changed-field counts are shown per request
@@ -72,6 +87,7 @@ Admin can reject edit requests
 Approved requests update the live customer record
 Rejected requests leave the live customer record unchanged
 Customer detail view shows edit request history
+Customer list shows pending edit indicators
 Audit trail records request, approval, and rejection events
 Customer Management
 Create customer records
@@ -112,11 +128,12 @@ No-results messaging for search/filter combinations
 API failure messaging
 Unauthorized/session-expired messaging
 Selected-customer fallback when filtered results change
+Dashboard summary state
 Pending edit request count display
 Edit request history display
 Current-vs-requested comparison grid
 Changed-field highlighting
-Edit request status filtering
+Edit request status/requester/date filtering
 Clear validation messages for customer, note, login, Staff user, and edit request forms
 Backend Reliability Features
 Backend health check
@@ -129,6 +146,8 @@ Health
 `GET /health`
 Auth
 `POST /auth/login`
+Dashboard
+`GET /dashboard/summary`
 Users
 `POST /users/staff`
 Customers
@@ -140,7 +159,7 @@ Customers
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
-`GET /customer-edit-requests?status=`
+`GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
 Notes
@@ -168,9 +187,10 @@ Require a valid JWT bearer token:
 `GET /audit`
 Admin-Only Routes
 Require a valid JWT bearer token with the `Admin` role:
+`GET /dashboard/summary`
 `PUT /customers/{id}`
 `POST /users/staff`
-`GET /customer-edit-requests?status=`
+`GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
 ---
@@ -184,6 +204,8 @@ Backend query/filter design
 Customer workflow modeling
 Staff-to-Admin approval workflow design
 Current-vs-requested approval review patterns
+Dashboard summary/reporting endpoint design
+Queue filtering and operational workflow visibility
 Notes and activity tracking
 Audit logging patterns
 JWT authentication
@@ -420,6 +442,40 @@ Switch filter to Rejected.
 Confirm the rejected request appears there.
 Confirm the live customer record only changes after approval.
 ---
+✅ Phase 7 — Completed
+Phase 7 added an Admin workflow dashboard and improved request queue visibility.
+Implemented
+Admin-only dashboard summary endpoint
+Frontend Admin dashboard summary cards
+Customer counts by total, active, and lead status
+Edit request counts by pending status and recent activity
+Pending edit requests created today count
+Seven-day edit request activity count
+Request queue filtering by:
+Status
+Requester
+From date
+To date
+Manual workflow refresh button
+Clear request filters button
+Per-customer pending edit indicators in the customer list
+Frontend pending customer ID tracking
+Vite proxy support for `/dashboard`
+Verified Flow
+Sign in as Admin.
+Confirm dashboard summary cards appear.
+Confirm dashboard counts load from the backend.
+Submit a Staff edit request.
+Confirm the pending edit request count updates.
+Confirm the customer list shows a `Pending Edit` indicator for affected customers.
+Filter edit requests by status.
+Filter edit requests by requester.
+Filter edit requests by date range.
+Clear request filters.
+Approve or reject an edit request.
+Confirm dashboard counts update after workflow actions.
+Confirm existing approval/rejection behavior still works.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -501,6 +557,11 @@ Search Customers
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/customers/search?q=acme&status=All"
 ```
+Get Dashboard Summary as Admin
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:8080/dashboard/summary
+```
 Create Staff User as Admin
 ```bash
 curl -i -X POST http://localhost:8080/users/staff \
@@ -535,6 +596,16 @@ List All Edit Requests as Admin
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/customer-edit-requests?status=All"
+```
+Filter Edit Requests by Requester
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=All&requestedBy=staff"
+```
+Filter Edit Requests by Date Range
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=All&from=2026-01-01&to=2026-12-31"
 ```
 Approve Edit Request as Admin
 Replace `<REQUEST_ID>` with an actual edit request ID.
@@ -602,31 +673,30 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 7
-Add request filters by date and requester
-Add request counts to customer list or dashboard
-Add dashboard-style workflow summary
-Improve Admin queue navigation
-Consider per-customer pending request indicators
+Phase 8
+Password change/reset workflow
+Authenticated password change form
+Admin password reset for Staff users
+Password reset audit logging
+Password update validation
 Later Phases
-Phase 8: Password change/reset workflow
 Phase 9: Owner/SuperAdmin distinction before allowing Admin-user creation
 Phase 10: Security-sensitive audit entries
-Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing - markable as "accepted", "rejected", "expired" (if unmarked after 30 days)
-Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing - markable as "signed", "completed/billable"
+Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing - markable as `accepted`, `rejected`, `expired` if unmarked after 30 days
+Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing - markable as `signed`, `completed/billable`
 Phase 12: Scope-of-work records with linking to customer/quote/contract, DOCX/PDF import/export, and physical hard-copy printing
 Phase 13: Document templates for quotes, contracts, scope-of-work
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
-Phase 16: Requisition creation with conversion to Purchase order, DOCX/PDF import/export and physical hard-copy printing
-Phase 17: Accounts payable (tied to Requisitions and Purchase Orders) and Accounts Receivable/Invoicing (tied to Contracts) logging and filing with "Paid", "Due"/"Unpaid" and tied to Calendar/ICS alerts. 
+Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing
+Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with `Paid`, `Due`, and `Unpaid` states tied to Calendar/ICS alerts
 Phase 18: Backup/export tools
 Phase 19: Tenant/custom branding support
 ---
 📌 Status
 Current milestone:
 ```text
-Phase 6 complete — Admin edit-request review now shows current-vs-requested customer values, highlights changed fields, supports request status filters, and preserves the approval/rejection workflow.
+Phase 7 complete — Admin dashboard summary cards, request queue filters, pending customer indicators, dashboard endpoint, and workflow refresh behavior are working.
 ```
 ---
 👤 Author
