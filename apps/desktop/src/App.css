@@ -112,6 +112,17 @@ body {
   color: #742a2a;
 }
 
+.account-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.account-grid .card {
+  min-width: 0;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -630,6 +641,13 @@ button:disabled {
   font-size: 0.88rem;
 }
 
+.security-hint {
+  margin-top: 0.35rem;
+  color: #52606d;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .muted-text {
   margin-top: 0.5rem;
   color: #52606d;
@@ -646,6 +664,10 @@ button:disabled {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+
   .request-filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -656,7 +678,8 @@ button:disabled {
   .note-actions-row,
   .request-toolbar,
   .request-filter-grid,
-  .dashboard-grid {
+  .dashboard-grid,
+  .account-grid {
     grid-template-columns: 1fr;
   }
 

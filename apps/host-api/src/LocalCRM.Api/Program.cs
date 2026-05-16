@@ -172,6 +172,70 @@ app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ICon
     ));
 });
 
+
+app.MapPost("/auth/change-password", async (
+    ChangePasswordRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var caller = await GetCallerUserAsync(httpContext, db);
+    var performedBy = GetPerformedBy(httpContext);
+
+    if (caller is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var currentPassword = input.CurrentPassword;
+    var newPassword = input.NewPassword;
+
+    if (string.IsNullOrWhiteSpace(currentPassword))
+    {
+        return Results.BadRequest(new { error = "Current password is required" });
+    }
+
+    var passwordValidationError = ValidatePassword(newPassword);
+    if (!string.IsNullOrWhiteSpace(passwordValidationError))
+    {
+        return Results.BadRequest(new { error = passwordValidationError });
+    }
+
+    if (currentPassword == newPassword)
+    {
+        return Results.BadRequest(new { error = "New password must be different from current password" });
+    }
+
+    var passwordHasher = new PasswordHasher<User>();
+    var passwordResult = VerifyPassword(caller, currentPassword, passwordHasher);
+
+    if (!passwordResult.IsValid)
+    {
+        logger.LogWarning("Failed password change attempt for {Email}", caller.Email);
+        return Results.BadRequest(new { error = "Current password is incorrect" });
+    }
+
+    caller.PasswordHash = passwordHasher.HashPassword(caller, newPassword);
+    caller.UpdatedAtUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "User",
+        EntityId = caller.Id.ToString(),
+        Action = "PasswordChanged",
+        Details = $"Password changed for user '{caller.Email}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Password changed for {Email}", caller.Email);
+
+    return Results.Ok(new { message = "Password changed successfully" });
+}).RequireAuthorization("AuthenticatedUser");
+
 app.MapPost("/users/staff", async (
     CreateStaffUserRequest input,
     LocalCrmDbContext db,
@@ -249,6 +313,85 @@ app.MapPost("/users/staff", async (
         user.Role,
         user.IsActive
     ));
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/users", async (LocalCrmDbContext db) =>
+{
+    var users = await db.Users
+        .OrderBy(u => u.DisplayName)
+        .ThenBy(u => u.Email)
+        .Select(u => new UserListResponse(
+            u.Id,
+            u.DisplayName,
+            u.Email,
+            u.Role,
+            u.IsActive,
+            u.CreatedAtUtc,
+            u.UpdatedAtUtc
+        ))
+        .ToListAsync();
+
+    return Results.Ok(users);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/users/{userId:guid}/reset-password", async (
+    Guid userId,
+    ResetPasswordRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var caller = await GetCallerUserAsync(httpContext, db);
+
+    if (caller is null || caller.Role != "Admin")
+    {
+        logger.LogWarning("Unauthorized password reset attempt by {PerformedBy}", performedBy);
+        return Results.Forbid();
+    }
+
+    var targetUser = await db.Users.FindAsync(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+
+    if (targetUser.Role != "Staff")
+    {
+        return Results.BadRequest(new { error = "Only Staff user passwords can be reset by Admin users" });
+    }
+
+    if (!targetUser.IsActive)
+    {
+        return Results.BadRequest(new { error = "Inactive user passwords cannot be reset" });
+    }
+
+    var passwordValidationError = ValidatePassword(input.NewPassword);
+    if (!string.IsNullOrWhiteSpace(passwordValidationError))
+    {
+        return Results.BadRequest(new { error = passwordValidationError });
+    }
+
+    var passwordHasher = new PasswordHasher<User>();
+    targetUser.PasswordHash = passwordHasher.HashPassword(targetUser, input.NewPassword);
+    targetUser.UpdatedAtUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "User",
+        EntityId = targetUser.Id.ToString(),
+        Action = "PasswordReset",
+        Details = $"Password reset for Staff user '{targetUser.Email}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Password reset for {TargetEmail} by {PerformedBy}", targetUser.Email, performedBy);
+
+    return Results.Ok(new { message = "Staff password reset successfully" });
 }).RequireAuthorization("AdminOnly");
 
 app.MapGet("/customers", async (LocalCrmDbContext db, ILogger<Program> logger) =>
@@ -837,6 +980,36 @@ static CustomerEditRequestReviewResponse ToCustomerEditRequestReviewResponse(Cus
     );
 }
 
+static string ValidatePassword(string password)
+{
+    if (string.IsNullOrWhiteSpace(password))
+    {
+        return "Password is required";
+    }
+
+    if (password.Length < 8)
+    {
+        return "Password must be at least 8 characters";
+    }
+
+    if (!password.Any(char.IsUpper))
+    {
+        return "Password must include at least one uppercase letter";
+    }
+
+    if (!password.Any(char.IsLower))
+    {
+        return "Password must include at least one lowercase letter";
+    }
+
+    if (!password.Any(char.IsDigit))
+    {
+        return "Password must include at least one number";
+    }
+
+    return "";
+}
+
 static string ValidateRequestedCustomerFields(SubmitCustomerEditRequest input)
 {
     var name = input.Name.Trim();
@@ -963,6 +1136,25 @@ public record CreateStaffUserRequest(
     string DisplayName,
     string Email,
     string Password
+);
+
+public record ChangePasswordRequest(
+    string CurrentPassword,
+    string NewPassword
+);
+
+public record ResetPasswordRequest(
+    string NewPassword
+);
+
+public record UserListResponse(
+    Guid Id,
+    string DisplayName,
+    string Email,
+    string Role,
+    bool IsActive,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc
 );
 
 public record SubmitCustomerEditRequest(

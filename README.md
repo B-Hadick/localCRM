@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, approval workflows, dashboard reporting, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -17,6 +17,9 @@ Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
 Password hashing with ASP.NET Core Identity password hasher
+Authenticated password change workflow
+Admin Staff password reset workflow
+Security-sensitive audit events for password changes/resets
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -33,6 +36,8 @@ Changed-field highlighting
 Edit request status/requester/date filtering
 Admin dashboard summary cards
 Per-customer pending request indicators
+Account security panel
+Admin Staff password reset panel
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -49,12 +54,29 @@ JWT bearer authentication for protected backend routes
 Persistent signed-in user state across browser refreshes
 Token expiration tracking on the frontend
 Admin-only Staff user creation
+Admin-only Staff password reset
+Authenticated user password change
 Password hashing for seeded and newly created users
 Legacy development passwords upgrade to hashed passwords after successful login
+Password validation on backend and frontend
+Password Management
+Signed-in users can change their own password
+Current password is required before changing password
+Admin users can reset active Staff user passwords
+Admin users cannot reset Admin passwords through the Staff reset workflow
+Password requirements:
+Minimum 8 characters
+At least one uppercase letter
+At least one lowercase letter
+At least one number
+Password changes are audit logged
+Password resets are audit logged
+Password update operations preserve ASP.NET Core Identity password hashing
 Role-Aware Workflow
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
+Admin users can reset Staff passwords
 Staff users can create customers
 Staff users can view/search customers
 Staff users can view customer notes and audit activity
@@ -63,6 +85,7 @@ Staff users can submit customer edit requests
 Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Admin-only customer edits
 Backend enforces Admin-only Staff user creation
+Backend enforces Admin-only Staff password reset
 Backend enforces Admin-only edit-request approval/rejection
 Admin Dashboard
 Dashboard summary cards for operational workflow visibility
@@ -118,6 +141,8 @@ Audit entries for note creation
 Audit entries for edit request submission
 Audit entries for edit request approval
 Audit entries for edit request rejection
+Audit entries for password changes
+Audit entries for Staff password resets
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Compact audit display with activity counts
@@ -134,7 +159,9 @@ Edit request history display
 Current-vs-requested comparison grid
 Changed-field highlighting
 Edit request status/requester/date filtering
-Clear validation messages for customer, note, login, Staff user, and edit request forms
+Account security form state
+Staff password reset form state
+Clear validation messages for customer, note, login, Staff user, password, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -146,10 +173,13 @@ Health
 `GET /health`
 Auth
 `POST /auth/login`
+`POST /auth/change-password`
 Dashboard
 `GET /dashboard/summary`
 Users
+`GET /users`
 `POST /users/staff`
+`POST /users/{userId}/reset-password`
 Customers
 `GET /customers`
 `GET /customers/search?q=&status=`
@@ -175,6 +205,7 @@ Public Routes
 `POST /auth/login`
 Authenticated User Routes
 Require a valid JWT bearer token:
+`POST /auth/change-password`
 `GET /customers`
 `GET /customers/search`
 `GET /customers/{id}`
@@ -188,8 +219,10 @@ Require a valid JWT bearer token:
 Admin-Only Routes
 Require a valid JWT bearer token with the `Admin` role:
 `GET /dashboard/summary`
+`GET /users`
 `PUT /customers/{id}`
 `POST /users/staff`
+`POST /users/{userId}/reset-password`
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
@@ -206,6 +239,8 @@ Staff-to-Admin approval workflow design
 Current-vs-requested approval review patterns
 Dashboard summary/reporting endpoint design
 Queue filtering and operational workflow visibility
+Password management workflow design
+Security-sensitive audit logging
 Notes and activity tracking
 Audit logging patterns
 JWT authentication
@@ -476,6 +511,35 @@ Approve or reject an edit request.
 Confirm dashboard counts update after workflow actions.
 Confirm existing approval/rejection behavior still works.
 ---
+✅ Phase 8 — Completed
+Phase 8 added password change and Admin Staff password reset workflows.
+Implemented
+`POST /auth/change-password`
+`GET /users`
+`POST /users/{userId}/reset-password`
+Authenticated self-service password change
+Admin-only Staff password reset
+Frontend Account Security panel
+Frontend Admin Staff Password Reset panel
+Staff user selector for password reset
+Backend password validation
+Frontend password validation
+Password hashing through ASP.NET Core Identity password hasher
+Audit entry for `PasswordChanged`
+Audit entry for `PasswordReset`
+No additional Vite proxy route required because `/auth` and `/users` were already proxied
+Verified Flow
+Sign in as Admin.
+Confirm Account Security panel appears.
+Confirm Reset Staff Password panel appears.
+Reset a Staff user password.
+Sign out.
+Confirm Staff can sign in with the reset password.
+As Staff, change own password.
+Sign out.
+Confirm Staff can sign in with the changed password.
+Confirm password audit events are created.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -561,6 +625,26 @@ Get Dashboard Summary as Admin
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   http://localhost:8080/dashboard/summary
+```
+List Users as Admin
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:8080/users
+```
+Change Own Password
+```bash
+curl -i -X POST http://localhost:8080/auth/change-password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -d '{"currentPassword":"Staff123!","newPassword":"NewStaff123!"}'
+```
+Reset Staff Password as Admin
+Replace `<USER_ID>` with an actual Staff user ID from `GET /users`.
+```bash
+curl -i -X POST http://localhost:8080/users/<USER_ID>/reset-password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"newPassword":"ResetStaff123!"}'
 ```
 Create Staff User as Admin
 ```bash
@@ -673,14 +757,12 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 8
-Password change/reset workflow
-Authenticated password change form
-Admin password reset for Staff users
-Password reset audit logging
-Password update validation
-Later Phases
-Phase 9: Owner/SuperAdmin distinction before allowing Admin-user creation
+Phase 9
+Owner/SuperAdmin distinction before allowing Admin-user creation
+Owner-only Admin creation
+Admin user management hardening
+Protected role elevation workflows
+Later Phases:
 Phase 10: Security-sensitive audit entries
 Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing - markable as `accepted`, `rejected`, `expired` if unmarked after 30 days
 Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing - markable as `signed`, `completed/billable`
@@ -692,11 +774,12 @@ Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF impor
 Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with `Paid`, `Due`, and `Unpaid` states tied to Calendar/ICS alerts
 Phase 18: Backup/export tools
 Phase 19: Tenant/custom branding support
+Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post login splash page displays section tabs (buttons), pending requests and audit log
 ---
 📌 Status
 Current milestone:
 ```text
-Phase 7 complete — Admin dashboard summary cards, request queue filters, pending customer indicators, dashboard endpoint, and workflow refresh behavior are working.
+Phase 8 complete — Authenticated password change, Admin Staff password reset, password validation, password hashing, and password audit events are working.
 ```
 ---
 👤 Author

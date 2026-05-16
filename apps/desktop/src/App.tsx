@@ -120,6 +120,28 @@ type StaffUserForm = {
   password: string;
 };
 
+type UserAccount = {
+  id: string;
+  displayName: string;
+  email: string;
+  role: string;
+  isActive: boolean;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+};
+
+type ChangePasswordForm = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
+type ResetPasswordForm = {
+  userId: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -137,6 +159,18 @@ const emptyStaffUserForm: StaffUserForm = {
   displayName: "",
   email: "",
   password: ""
+};
+
+const emptyChangePasswordForm: ChangePasswordForm = {
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: ""
+};
+
+const emptyResetPasswordForm: ResetPasswordForm = {
+  userId: "",
+  newPassword: "",
+  confirmPassword: ""
 };
 
 const emptyDashboardSummary: DashboardSummary = {
@@ -170,6 +204,7 @@ function App() {
   const [requestQueue, setRequestQueue] = useState<CustomerEditRequestReview[]>([]);
   const [pendingRequestCustomerIds, setPendingRequestCustomerIds] = useState<string[]>([]);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
+  const [users, setUsers] = useState<UserAccount[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -194,6 +229,8 @@ function App() {
   });
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
+  const [changePasswordForm, setChangePasswordForm] = useState<ChangePasswordForm>(emptyChangePasswordForm);
+  const [resetPasswordForm, setResetPasswordForm] = useState<ResetPasswordForm>(emptyResetPasswordForm);
 
   const isAdmin = currentUser?.role === "Admin";
 
@@ -305,6 +342,68 @@ function App() {
     return "";
   }
 
+  function validatePasswordValue(password: string) {
+    if (!password) {
+      return "Password is required.";
+    }
+
+    if (password.length < 8) {
+      return "Password must be at least 8 characters.";
+    }
+
+    if (!/[A-Z]/.test(password)) {
+      return "Password must include at least one uppercase letter.";
+    }
+
+    if (!/[a-z]/.test(password)) {
+      return "Password must include at least one lowercase letter.";
+    }
+
+    if (!/[0-9]/.test(password)) {
+      return "Password must include at least one number.";
+    }
+
+    return "";
+  }
+
+  function validateChangePasswordForm(input: ChangePasswordForm) {
+    if (!input.currentPassword) {
+      return "Current password is required.";
+    }
+
+    const passwordError = validatePasswordValue(input.newPassword);
+    if (passwordError) {
+      return passwordError;
+    }
+
+    if (input.currentPassword === input.newPassword) {
+      return "New password must be different from current password.";
+    }
+
+    if (input.newPassword !== input.confirmPassword) {
+      return "New password and confirmation do not match.";
+    }
+
+    return "";
+  }
+
+  function validateResetPasswordForm(input: ResetPasswordForm) {
+    if (!input.userId) {
+      return "Select a Staff user before resetting a password.";
+    }
+
+    const passwordError = validatePasswordValue(input.newPassword);
+    if (passwordError) {
+      return passwordError;
+    }
+
+    if (input.newPassword !== input.confirmPassword) {
+      return "Temporary password and confirmation do not match.";
+    }
+
+    return "";
+  }
+
   function customerToForm(customer: Customer): CustomerForm {
     return {
       name: customer.name || "",
@@ -369,6 +468,9 @@ function App() {
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
     setDashboardSummary(emptyDashboardSummary);
+    setUsers([]);
+    setChangePasswordForm(emptyChangePasswordForm);
+    setResetPasswordForm(emptyResetPasswordForm);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -467,6 +569,9 @@ function App() {
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
     setDashboardSummary(emptyDashboardSummary);
+    setUsers([]);
+    setChangePasswordForm(emptyChangePasswordForm);
+    setResetPasswordForm(emptyResetPasswordForm);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -589,6 +694,34 @@ function App() {
       console.error(error);
       setDashboardSummary(emptyDashboardSummary);
       setStatus("Failed to load dashboard summary", "error");
+    }
+  }
+
+  async function loadUsers() {
+    if (!currentUser || !isAdmin) {
+      setUsers([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/users", {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as UserAccount[];
+      setUsers(data);
+    } catch (error) {
+      console.error(error);
+      setUsers([]);
+      setStatus("Failed to load users", "error");
     }
   }
 
@@ -764,7 +897,8 @@ function App() {
     await Promise.all([
       loadDashboardSummary(),
       loadRequestQueue(),
-      loadPendingCustomerIds()
+      loadPendingCustomerIds(),
+      loadUsers()
     ]);
   }
 
@@ -781,6 +915,7 @@ function App() {
       setRequestQueue([]);
       setPendingRequestCustomerIds([]);
       setDashboardSummary(emptyDashboardSummary);
+      setUsers([]);
     }
   }, [currentUser?.id, currentUser?.role, requestStatusFilter, requestRequesterFilter, requestFromDate, requestToDate]);
 
@@ -1088,9 +1223,119 @@ function App() {
 
       setStaffUserForm(emptyStaffUserForm);
       setStatus(`Staff user "${createdUser.displayName}" created successfully.`, "success");
+      await loadUsers();
     } catch (error) {
       console.error(error);
       setStatus("Failed to create staff user. Check permissions and try again.", "error");
+    }
+  }
+
+  async function handleChangePasswordSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before changing your password.", "error");
+      return;
+    }
+
+    const validationError = validateChangePasswordForm(changePasswordForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Changing password...", "info");
+
+    try {
+      const response = await fetch("/auth/change-password", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          currentPassword: changePasswordForm.currentPassword,
+          newPassword: changePasswordForm.newPassword
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setChangePasswordForm(emptyChangePasswordForm);
+      setStatus("Password changed successfully.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to change password.", "error");
+    }
+  }
+
+  async function handleResetPasswordSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser || !isAdmin) {
+      setStatus("Only Admin users can reset Staff passwords.", "error");
+      return;
+    }
+
+    const validationError = validateResetPasswordForm(resetPasswordForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    const selectedUser = users.find((user) => user.id === resetPasswordForm.userId);
+
+    if (!selectedUser || selectedUser.role !== "Staff") {
+      setStatus("Select a valid Staff user before resetting a password.", "error");
+      return;
+    }
+
+    setStatus("Resetting Staff password...", "info");
+
+    try {
+      const response = await fetch(`/users/${resetPasswordForm.userId}/reset-password`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          newPassword: resetPasswordForm.newPassword
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setResetPasswordForm(emptyResetPasswordForm);
+      setStatus(`Password reset for ${selectedUser.email}.`, "success");
+      await loadUsers();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to reset password.", "error");
     }
   }
 
@@ -1100,6 +1345,8 @@ function App() {
     setRequestFromDate("");
     setRequestToDate("");
   }
+
+  const staffUsers = users.filter((user) => user.role === "Staff" && user.isActive);
 
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
   const hasRequestFilters =
@@ -1191,6 +1438,101 @@ function App() {
       <div className={`status-banner status-${statusType}`}>
         {statusMessage}
       </div>
+
+      <section className="account-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Account Security</h2>
+            <span className="status-chip status-chip-active">Signed In</span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleChangePasswordSubmit}>
+            <div className="form-grid">
+              <label>
+                Current Password
+                <input
+                  type="password"
+                  value={changePasswordForm.currentPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, currentPassword: e.target.value })}
+                  placeholder="Current password"
+                />
+              </label>
+
+              <label>
+                New Password
+                <input
+                  type="password"
+                  value={changePasswordForm.newPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
+                  placeholder="At least 8 characters, uppercase, lowercase, number"
+                />
+              </label>
+
+              <label>
+                Confirm New Password
+                <input
+                  type="password"
+                  value={changePasswordForm.confirmPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, confirmPassword: e.target.value })}
+                  placeholder="Confirm new password"
+                />
+              </label>
+            </div>
+
+            <button type="submit">Change My Password</button>
+          </form>
+        </section>
+
+        {isAdmin && (
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Reset Staff Password</h2>
+              <span className="status-chip status-chip-active">Admin Only</span>
+            </div>
+
+            <form className="customer-form" onSubmit={handleResetPasswordSubmit}>
+              <div className="form-grid">
+                <label>
+                  Staff User
+                  <select
+                    value={resetPasswordForm.userId}
+                    onChange={(e) => setResetPasswordForm({ ...resetPasswordForm, userId: e.target.value })}
+                  >
+                    <option value="">Select Staff user</option>
+                    {staffUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName} — {user.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  New Temporary Password
+                  <input
+                    type="password"
+                    value={resetPasswordForm.newPassword}
+                    onChange={(e) => setResetPasswordForm({ ...resetPasswordForm, newPassword: e.target.value })}
+                    placeholder="At least 8 characters, uppercase, lowercase, number"
+                  />
+                </label>
+
+                <label>
+                  Confirm Temporary Password
+                  <input
+                    type="password"
+                    value={resetPasswordForm.confirmPassword}
+                    onChange={(e) => setResetPasswordForm({ ...resetPasswordForm, confirmPassword: e.target.value })}
+                    placeholder="Confirm temporary password"
+                  />
+                </label>
+              </div>
+
+              <button type="submit">Reset Staff Password</button>
+            </form>
+          </section>
+        )}
+      </section>
 
       {isAdmin && (
         <section className="dashboard-grid">
