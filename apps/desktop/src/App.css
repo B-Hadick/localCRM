@@ -265,6 +265,43 @@ body {
   color: #1f2933;
 }
 
+.audit-filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr 1fr 1.1fr 0.85fr 0.85fr;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.audit-filter-grid label {
+  display: grid;
+  gap: 0.25rem;
+  color: #334e68;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.audit-filter-grid input,
+.audit-filter-grid select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbd2d9;
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 400;
+  color: #1f2933;
+}
+
+.audit-review-list {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.audit-review-list .audit-item {
+  border-left: 4px solid #bcccdc;
+}
+
 .result-count {
   margin-bottom: 0.75rem;
   color: #52606d;
@@ -668,7 +705,8 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .request-filter-grid {
+  .request-filter-grid,
+  .audit-filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -678,6 +716,7 @@ button:disabled {
   .note-actions-row,
   .request-toolbar,
   .request-filter-grid,
+  .audit-filter-grid,
   .dashboard-grid,
   .account-grid {
     grid-template-columns: 1fr;

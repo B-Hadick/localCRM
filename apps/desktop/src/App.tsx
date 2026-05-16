@@ -148,6 +148,15 @@ type ResetPasswordForm = {
   confirmPassword: string;
 };
 
+type AuditFilters = {
+  entityType: string;
+  entityId: string;
+  action: string;
+  performedBy: string;
+  from: string;
+  to: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -185,6 +194,15 @@ const emptyResetPasswordForm: ResetPasswordForm = {
   confirmPassword: ""
 };
 
+const emptyAuditFilters: AuditFilters = {
+  entityType: "All",
+  entityId: "",
+  action: "",
+  performedBy: "",
+  from: "",
+  to: ""
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -217,6 +235,7 @@ function App() {
   const [pendingRequestCustomerIds, setPendingRequestCustomerIds] = useState<string[]>([]);
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [users, setUsers] = useState<UserAccount[]>([]);
+  const [globalAuditLogs, setGlobalAuditLogs] = useState<AuditLog[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -234,6 +253,7 @@ function App() {
   const [requestRequesterFilter, setRequestRequesterFilter] = useState("");
   const [requestFromDate, setRequestFromDate] = useState("");
   const [requestToDate, setRequestToDate] = useState("");
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -503,9 +523,11 @@ function App() {
     setSelectedCustomer(null);
     setNotes([]);
     setAuditLogs([]);
+    setGlobalAuditLogs([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
+    setGlobalAuditLogs([]);
     setDashboardSummary(emptyDashboardSummary);
     setUsers([]);
     setChangePasswordForm(emptyChangePasswordForm);
@@ -605,6 +627,7 @@ function App() {
     setSelectedCustomer(null);
     setNotes([]);
     setAuditLogs([]);
+    setGlobalAuditLogs([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -763,6 +786,63 @@ function App() {
       console.error(error);
       setUsers([]);
       setStatus("Failed to load users", "error");
+    }
+  }
+
+  async function loadGlobalAuditLogs() {
+    if (!currentUser || !isAdminOrOwner) {
+      setGlobalAuditLogs([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (auditFilters.entityType !== "All") {
+        params.set("entityType", auditFilters.entityType);
+      }
+
+      if (auditFilters.entityId.trim()) {
+        params.set("entityId", auditFilters.entityId.trim());
+      }
+
+      if (auditFilters.action.trim()) {
+        params.set("action", auditFilters.action.trim());
+      }
+
+      if (auditFilters.performedBy.trim()) {
+        params.set("performedBy", auditFilters.performedBy.trim());
+      }
+
+      if (auditFilters.from) {
+        params.set("from", auditFilters.from);
+      }
+
+      if (auditFilters.to) {
+        params.set("to", auditFilters.to);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/audit?${queryString}` : "/audit";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as AuditLog[];
+      setGlobalAuditLogs(data);
+    } catch (error) {
+      console.error(error);
+      setGlobalAuditLogs([]);
+      setStatus("Failed to load global audit log", "error");
     }
   }
 
@@ -939,7 +1019,8 @@ function App() {
       loadDashboardSummary(),
       loadRequestQueue(),
       loadPendingCustomerIds(),
-      loadUsers()
+      loadUsers(),
+      loadGlobalAuditLogs()
     ]);
   }
 
@@ -958,7 +1039,20 @@ function App() {
       setDashboardSummary(emptyDashboardSummary);
       setUsers([]);
     }
-  }, [currentUser?.id, currentUser?.role, requestStatusFilter, requestRequesterFilter, requestFromDate, requestToDate]);
+  }, [
+    currentUser?.id,
+    currentUser?.role,
+    requestStatusFilter,
+    requestRequesterFilter,
+    requestFromDate,
+    requestToDate,
+    auditFilters.entityType,
+    auditFilters.entityId,
+    auditFilters.action,
+    auditFilters.performedBy,
+    auditFilters.from,
+    auditFilters.to
+  ]);
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -1442,6 +1536,10 @@ function App() {
     setRequestToDate("");
   }
 
+  function clearAuditFilters() {
+    setAuditFilters(emptyAuditFilters);
+  }
+
   const staffUsers = users.filter((user) => user.role === "Staff" && user.isActive);
 
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
@@ -1450,6 +1548,14 @@ function App() {
     requestRequesterFilter.trim() ||
     requestFromDate ||
     requestToDate;
+
+  const hasAuditFilters =
+    auditFilters.entityType !== "All" ||
+    auditFilters.entityId.trim() ||
+    auditFilters.action.trim() ||
+    auditFilters.performedBy.trim() ||
+    auditFilters.from ||
+    auditFilters.to;
 
   const sortedNotes = [...notes].sort((a, b) => {
     if (a.isPinned !== b.isPinned) {
@@ -2081,6 +2187,106 @@ function App() {
               )}
             </div>
           </section>
+        </section>
+      )}
+
+      {isAdminOrOwner && (
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Audit Review</h2>
+            <span className="count-chip">{globalAuditLogs.length}</span>
+          </div>
+
+          <div className="audit-filter-grid">
+            <label>
+              Entity Type
+              <select
+                value={auditFilters.entityType}
+                onChange={(e) => setAuditFilters({ ...auditFilters, entityType: e.target.value })}
+              >
+                <option value="All">All Entity Types</option>
+                <option value="User">User</option>
+                <option value="Customer">Customer</option>
+                <option value="Auth">Auth</option>
+              </select>
+            </label>
+
+            <label>
+              Entity ID
+              <input
+                value={auditFilters.entityId}
+                onChange={(e) => setAuditFilters({ ...auditFilters, entityId: e.target.value })}
+                placeholder="Entity ID or email"
+              />
+            </label>
+
+            <label>
+              Action
+              <input
+                value={auditFilters.action}
+                onChange={(e) => setAuditFilters({ ...auditFilters, action: e.target.value })}
+                placeholder="Login, Password, Created..."
+              />
+            </label>
+
+            <label>
+              Performed By
+              <input
+                value={auditFilters.performedBy}
+                onChange={(e) => setAuditFilters({ ...auditFilters, performedBy: e.target.value })}
+                placeholder="owner@localcrm.dev"
+              />
+            </label>
+
+            <label>
+              From
+              <input
+                type="date"
+                value={auditFilters.from}
+                onChange={(e) => setAuditFilters({ ...auditFilters, from: e.target.value })}
+              />
+            </label>
+
+            <label>
+              To
+              <input
+                type="date"
+                value={auditFilters.to}
+                onChange={(e) => setAuditFilters({ ...auditFilters, to: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="note-actions-row">
+            <button type="button" onClick={loadGlobalAuditLogs}>
+              Refresh Audit
+            </button>
+
+            <button type="button" onClick={clearAuditFilters} disabled={!hasAuditFilters}>
+              Clear Audit Filters
+            </button>
+          </div>
+
+          <div className="stack-list compact-list audit-review-list">
+            {globalAuditLogs.length === 0 ? (
+              <p className="muted-text">No audit entries match the selected filters.</p>
+            ) : (
+              globalAuditLogs.map((log) => (
+                <div key={log.id} className="stack-item audit-item">
+                  <div className="stack-item-header">
+                    <strong>{log.action}</strong>
+                    <span>{new Date(log.createdAtUtc).toLocaleString()}</span>
+                  </div>
+
+                  <div className="compact-content">{log.details}</div>
+
+                  <div className="muted-text compact-meta">
+                    {log.entityType} · {log.entityId} · {log.performedBy}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </section>
       )}
 

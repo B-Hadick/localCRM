@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -17,11 +17,12 @@ Staff-to-Admin approval workflow
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
+Global audit filtering by entity, action, actor, and date range
 Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
 Admin/Owner Staff password reset workflow
 Owner-only Admin user creation workflow
-Security-sensitive audit events for password changes/resets/user creation
+Security-sensitive audit events for login, password changes/resets, and user creation
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -42,6 +43,7 @@ Per-customer pending request indicators
 Account security panel
 Admin/Owner Staff password reset panel
 Owner-only Admin creation panel
+Admin/Owner global audit review panel
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -64,6 +66,7 @@ Authenticated user password change
 Password hashing for seeded and newly created users
 Legacy development passwords upgrade to hashed passwords after successful login
 Password validation on backend and frontend
+Login success and failed-login attempts are audit logged
 Password Management
 Signed-in users can change their own password
 Current password is required before changing password
@@ -86,15 +89,18 @@ Owner users can create Admin users
 Owner users can create Staff users
 Owner users can reset Staff passwords
 Owner users can create, edit, and review customer workflows
+Owner users can review global audit activity
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
 Admin users can reset Staff passwords
+Admin users can review global audit activity
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
-Staff users can view customer notes and audit activity
+Staff users can view customer notes and customer-specific audit activity
 Staff users cannot directly edit customer records
+Staff users cannot view the global audit review panel
 Staff users can submit customer edit requests
 Owner/Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Owner-only Admin creation
@@ -102,6 +108,7 @@ Backend enforces Admin/Owner Staff user creation
 Backend enforces Admin/Owner customer edits
 Backend enforces Admin/Owner Staff password reset
 Backend enforces Admin/Owner edit-request approval/rejection
+Backend enforces Admin/Owner-only global audit review
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -160,8 +167,18 @@ Audit entries for password changes
 Audit entries for Staff password resets
 Audit entries for Staff user creation
 Audit entries for Admin user creation
+Audit entries for successful logins
+Audit entries for failed login attempts
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
+Admin/Owner global audit review panel
+Global audit filtering by:
+Entity type
+Entity ID
+Action
+Performed by
+From date
+To date
 Compact audit display with activity counts
 UI State Handling
 Loading state for customer records
@@ -179,7 +196,8 @@ Edit request status/requester/date filtering
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
-Clear validation messages for customer, note, login, Staff user, Admin user, password, and edit request forms
+Global audit review filter state
+Clear validation messages for customer, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -216,7 +234,7 @@ Notes
 `POST /customers/{customerId}/notes`
 Audit
 `GET /customers/{customerId}/audit`
-`GET /audit`
+`GET /audit?entityType=&entityId=&action=&performedBy=&from=&to=`
 ---
 🔐 Authorization Model
 Public Routes
@@ -234,7 +252,6 @@ Require a valid JWT bearer token:
 `GET /customers/{customerId}/notes`
 `POST /customers/{customerId}/notes`
 `GET /customers/{customerId}/audit`
-`GET /audit`
 Admin / Owner Routes
 Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `GET /dashboard/summary`
@@ -245,6 +262,7 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
+`GET /audit?entityType=&entityId=&action=&performedBy=&from=&to=`
 Owner-Only Routes
 Require a valid JWT bearer token with the `Owner` role:
 `POST /users/admin`
@@ -265,6 +283,8 @@ Password management workflow design
 Owner/Admin/Staff authorization hierarchy
 Protected role elevation workflow
 Security-sensitive audit logging
+Global audit review workflow design
+Audit filtering by actor, action, entity, and date
 Notes and activity tracking
 Audit logging patterns
 JWT authentication
@@ -600,6 +620,48 @@ Sign in as Staff.
 Confirm Staff cannot see dashboard/user-management/admin tools.
 Confirm Staff can still create customers and submit edit requests.
 ---
+✅ Phase 10 — Completed
+Phase 10 added security-sensitive audit entries and a global Admin/Owner audit review workflow.
+Implemented
+Enhanced global audit endpoint:
+`GET /audit?entityType=&entityId=&action=&performedBy=&from=&to=`
+Global `/audit` endpoint changed to Admin/Owner only
+Global audit result limit increased to 250
+Backend audit filtering by:
+Entity type
+Entity ID
+Action
+Performed by
+From date
+To date
+Audit event for `LoginSucceeded`
+Audit event for `LoginFailed`
+Frontend Admin/Owner Audit Review panel
+Frontend audit filters by:
+Entity type
+Entity ID
+Action
+Performed by
+From date
+To date
+Refresh Audit button
+Clear Audit Filters button
+Staff remains blocked from global Audit Review
+Customer-specific audit view remains available in Customer Detail
+No additional Vite proxy route required because `/audit` was already proxied
+Verified Flow
+Sign in as Owner.
+Confirm Audit Review panel appears.
+Confirm login activity appears in the audit feed.
+Filter audit entries by `User`, `Customer`, and `Auth`.
+Filter audit entries by action terms such as `Login`, `Password`, `Created`, and `Edit`.
+Filter audit entries by actor, such as `owner`.
+Filter audit entries by from/to date.
+Clear audit filters.
+Sign in as Admin and confirm Audit Review is available.
+Sign in as Staff and confirm global Audit Review is not visible.
+Confirm customer-specific audit activity still appears under Customer Detail.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -767,6 +829,21 @@ curl -i -X POST http://localhost:8080/users/staff \
   -H "Authorization: Bearer $OWNER_TOKEN" \
   -d '{"displayName":"Owner Created Staff","email":"owner.created.staff@localcrm.dev","password":"Staff1234!"}'
 ```
+Query Global Audit as Owner
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/audit?action=Login&entityType=User"
+```
+Query Global Audit by Actor and Date
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/audit?performedBy=owner&from=2026-01-01&to=2026-12-31"
+```
+Query Global Audit by Entity Type
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/audit?entityType=Customer"
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -884,28 +961,32 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 10
-Security-sensitive audit entries
-Enhanced user-management audit visibility
-Audit filters by actor, action, entity, and date
-Admin/Owner audit review workflow
+Phase 11a
+Quotes with DOCX/PDF import/export and physical hard-copy printing
+Link quotes to customers, contracts, and scope of work
+Mark quotes as `accepted`, `rejected`, or `expired`
+Automatically treat unmarked quotes as expired after 30 days
+Sort quotes by status, name, and date
+Phase 11b
+Contracts with DOCX/PDF import/export and physical hard-copy printing
+Link contracts to customers, quotes, and scope of work
+Mark contracts as `signed` or `completed/billable`
+Sort contracts by name, status, and date
 Later Phases
-Phase 10: Security-sensitive audit entries
-Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing; linking to customers and contracts and scope of work, and markable as `accepted`, `rejected`, `expired` if unmarked after 30 days with sorting by status, name, date
-Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing; linking to customers and quotes and scope of work - markable as `signed`, `completed/billable` with sorting by name, status, date
 Phase 12: Scope-of-work records with linking to customer/quote/contract, DOCX/PDF import/export, and physical hard-copy printing
 Phase 13: Document templates for quotes, contracts, scope-of-work
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
-Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requesition creator, requisition number, purchase order number, date, vendor name
-Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts Accounts Payable sorting and searching by vendor name, requesition creator, requisition number, purchase order number, date; Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phgone number, invoice number, invoice status, contract number, datePhase 18: Backup/export tools
+Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
+Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts. Accounts Payable sorting and searching by vendor name, requisition creator, requisition number, purchase order number, date. Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phone number, invoice number, invoice status, contract number, date
+Phase 18: Backup/export tools
 Phase 19: Tenant/custom branding support
 Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post-login splash page displays section tabs/buttons, pending requests, and audit log
 ---
 📌 Status
 Current milestone:
 ```text
-Phase 9 complete — Owner/SuperAdmin role hardening, Owner-only Admin creation, Admin/Owner shared operational permissions, and protected role elevation workflow are working.
+Phase 10 complete — Security-sensitive audit entries, enhanced global audit filtering, and Admin/Owner audit review workflow are working.
 ```
 ---
 👤 Author

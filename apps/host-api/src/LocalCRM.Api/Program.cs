@@ -141,6 +141,19 @@ app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ICon
 
     if (user is null || !user.IsActive)
     {
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Auth",
+            EntityId = email,
+            Action = "LoginFailed",
+            Details = $"Failed login attempt for '{email}'.",
+            PerformedBy = email,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
+
         logger.LogWarning("Failed login attempt for {Email}", email);
         return Results.Unauthorized();
     }
@@ -150,6 +163,19 @@ app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ICon
 
     if (!passwordResult.IsValid)
     {
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "User",
+            EntityId = user.Id.ToString(),
+            Action = "LoginFailed",
+            Details = $"Failed login attempt for user '{user.Email}'.",
+            PerformedBy = user.Email,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
+
         logger.LogWarning("Failed login attempt for {Email}", email);
         return Results.Unauthorized();
     }
@@ -164,6 +190,19 @@ app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ICon
     }
 
     var tokenResult = CreateJwtToken(user, config);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "User",
+        EntityId = user.Id.ToString(),
+        Action = "LoginSucceeded",
+        Details = $"User '{user.Email}' logged in with role '{user.Role}'.",
+        PerformedBy = user.Email,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    await db.SaveChangesAsync();
 
     logger.LogInformation("User {Email} logged in with role {Role}", user.Email, user.Role);
 
@@ -997,27 +1036,59 @@ app.MapGet("/customers/{customerId:guid}/audit", async (Guid customerId, LocalCr
     return Results.Ok(logs);
 }).RequireAuthorization("AuthenticatedUser");
 
-app.MapGet("/audit", async (string? entityType, string? entityId, LocalCrmDbContext db) =>
+app.MapGet("/audit", async (
+    string? entityType,
+    string? entityId,
+    string? action,
+    string? performedBy,
+    DateTime? from,
+    DateTime? to,
+    LocalCrmDbContext db) =>
 {
     var query = db.AuditLogs.AsQueryable();
 
-    if (!string.IsNullOrWhiteSpace(entityType))
+    if (!string.IsNullOrWhiteSpace(entityType) && entityType != "All")
     {
         query = query.Where(a => a.EntityType == entityType);
     }
 
     if (!string.IsNullOrWhiteSpace(entityId))
     {
-        query = query.Where(a => a.EntityId == entityId);
+        var entityIdSearch = entityId.Trim().ToLower();
+        query = query.Where(a => a.EntityId.ToLower().Contains(entityIdSearch));
+    }
+
+    if (!string.IsNullOrWhiteSpace(action) && action != "All")
+    {
+        var actionSearch = action.Trim().ToLower();
+        query = query.Where(a => a.Action.ToLower().Contains(actionSearch));
+    }
+
+    if (!string.IsNullOrWhiteSpace(performedBy))
+    {
+        var performedBySearch = performedBy.Trim().ToLower();
+        query = query.Where(a => a.PerformedBy.ToLower().Contains(performedBySearch));
+    }
+
+    if (from.HasValue)
+    {
+        var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        query = query.Where(a => a.CreatedAtUtc >= fromUtc);
+    }
+
+    if (to.HasValue)
+    {
+        var toUtcExclusive = DateTime.SpecifyKind(to.Value.Date.AddDays(1), DateTimeKind.Utc);
+        query = query.Where(a => a.CreatedAtUtc < toUtcExclusive);
     }
 
     var logs = await query
         .OrderByDescending(a => a.CreatedAtUtc)
-        .Take(100)
+        .Take(250)
         .ToListAsync();
 
     return Results.Ok(logs);
-}).RequireAuthorization("AuthenticatedUser");
+}).RequireAuthorization("AdminOrOwner");
 
 app.Run();
 
