@@ -13,6 +13,7 @@ public class LocalCrmDbContext : DbContext
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerNote> CustomerNotes => Set<CustomerNote>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<CustomerEditRequest> CustomerEditRequests => Set<CustomerEditRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,6 +63,33 @@ public class LocalCrmDbContext : DbContext
             entity.Property(x => x.Action).HasMaxLength(100);
             entity.Property(x => x.PerformedBy).HasMaxLength(100);
             entity.Property(x => x.Details).HasMaxLength(4000);
+        });
+
+        modelBuilder.Entity<CustomerEditRequest>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.HasIndex(x => x.CustomerId);
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.RequestedByEmail);
+
+            entity.Property(x => x.RequestedByUserId).HasMaxLength(100);
+            entity.Property(x => x.RequestedByEmail).HasMaxLength(200);
+            entity.Property(x => x.Status).HasMaxLength(50);
+
+            entity.Property(x => x.RequestedName).HasMaxLength(200);
+            entity.Property(x => x.RequestedType).HasMaxLength(50);
+            entity.Property(x => x.RequestedEmail).HasMaxLength(200);
+            entity.Property(x => x.RequestedPhone).HasMaxLength(50);
+            entity.Property(x => x.RequestedAddressLine1).HasMaxLength(250);
+            entity.Property(x => x.RequestedAddressLine2).HasMaxLength(250);
+            entity.Property(x => x.RequestedCity).HasMaxLength(100);
+            entity.Property(x => x.RequestedState).HasMaxLength(100);
+            entity.Property(x => x.RequestedPostalCode).HasMaxLength(50);
+            entity.Property(x => x.RequestedStatus).HasMaxLength(50);
+
+            entity.Property(x => x.AdminDecisionByEmail).HasMaxLength(200);
+            entity.Property(x => x.AdminDecisionNote).HasMaxLength(1000);
         });
     }
 }

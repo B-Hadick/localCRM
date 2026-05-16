@@ -36,6 +36,29 @@ type AuditLog = {
   createdAtUtc: string;
 };
 
+type CustomerEditRequest = {
+  id: string;
+  customerId: string;
+  requestedByUserId: string;
+  requestedByEmail: string;
+  status: string;
+  requestedName: string;
+  requestedType: string;
+  requestedEmail: string;
+  requestedPhone: string;
+  requestedAddressLine1: string;
+  requestedAddressLine2: string;
+  requestedCity: string;
+  requestedState: string;
+  requestedPostalCode: string;
+  requestedStatus: string;
+  adminDecisionByEmail: string;
+  adminDecisionNote: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  decidedAtUtc: string | null;
+};
+
 type CustomerForm = {
   name: string;
   type: string;
@@ -98,6 +121,8 @@ function App() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [notes, setNotes] = useState<CustomerNote[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [customerEditRequests, setCustomerEditRequests] = useState<CustomerEditRequest[]>([]);
+  const [pendingEditRequests, setPendingEditRequests] = useState<CustomerEditRequest[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -110,6 +135,7 @@ function App() {
 
   const [form, setForm] = useState<CustomerForm>(emptyCustomerForm);
   const [editForm, setEditForm] = useState<CustomerForm>(emptyCustomerForm);
+  const [decisionNote, setDecisionNote] = useState("");
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -253,6 +279,8 @@ function App() {
     setSelectedCustomer(null);
     setNotes([]);
     setAuditLogs([]);
+    setCustomerEditRequests([]);
+    setPendingEditRequests([]);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -347,6 +375,8 @@ function App() {
     setSelectedCustomer(null);
     setNotes([]);
     setAuditLogs([]);
+    setCustomerEditRequests([]);
+    setPendingEditRequests([]);
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
@@ -404,6 +434,7 @@ function App() {
         setSelectedCustomer(null);
         setNotes([]);
         setAuditLogs([]);
+        setCustomerEditRequests([]);
 
         if (searchTerm.trim() || statusFilter !== "All") {
           setStatus("No customers match the current search/filter.", "info");
@@ -435,6 +466,7 @@ function App() {
       setSelectedCustomer(null);
       setNotes([]);
       setAuditLogs([]);
+      setCustomerEditRequests([]);
       setCustomerLoadError("Failed to load customers. Check that the backend API is running.");
       setStatus("Failed to load customers", "error");
     } finally {
@@ -496,6 +528,65 @@ function App() {
     }
   }
 
+  async function loadCustomerEditRequests(customerId: string) {
+    if (!currentUser) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/customers/${customerId}/edit-requests`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as CustomerEditRequest[];
+      setCustomerEditRequests(data);
+
+      if (isAdmin) {
+        await loadPendingEditRequests();
+      }
+    } catch (error) {
+      console.error(error);
+      setCustomerEditRequests([]);
+      setStatus("Failed to load edit requests", "error");
+    }
+  }
+
+  async function loadPendingEditRequests() {
+    if (!currentUser || !isAdmin) {
+      setPendingEditRequests([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/customer-edit-requests?status=Pending", {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as CustomerEditRequest[];
+      setPendingEditRequests(data);
+    } catch (error) {
+      console.error(error);
+      setPendingEditRequests([]);
+      setStatus("Failed to load pending edit requests", "error");
+    }
+  }
+
   useEffect(() => {
     if (currentUser) {
       loadCustomers();
@@ -503,10 +594,19 @@ function App() {
   }, [currentUser, searchTerm, statusFilter]);
 
   useEffect(() => {
+    if (currentUser && isAdmin) {
+      loadPendingEditRequests();
+    } else {
+      setPendingEditRequests([]);
+    }
+  }, [currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
     if (selectedCustomer) {
       setEditForm(customerToForm(selectedCustomer));
       loadCustomerNotes(selectedCustomer.id);
       loadAuditLogs(selectedCustomer.id);
+      loadCustomerEditRequests(selectedCustomer.id);
     }
   }, [selectedCustomer]);
 
@@ -549,6 +649,10 @@ function App() {
       setSelectedCustomer(createdCustomer);
       setStatus(`Customer "${createdCustomer.name}" created successfully.`, "success");
       await loadCustomers();
+
+      if (isAdmin) {
+        await loadPendingEditRequests();
+      }
     } catch (error) {
       console.error(error);
       setStatus("Failed to create customer. Check the API and try again.", "error");
@@ -607,9 +711,99 @@ function App() {
       setStatus(`Customer "${updatedCustomer.name}" updated successfully.`, "success");
       await loadCustomers();
       await loadAuditLogs(updatedCustomer.id);
+      await loadCustomerEditRequests(updatedCustomer.id);
+      await loadPendingEditRequests();
     } catch (error) {
       console.error(error);
       setStatus("Failed to update customer. Check the API and try again.", "error");
+    }
+  }
+
+  async function handleEditRequestSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before requesting customer edits.", "error");
+      return;
+    }
+
+    if (!selectedCustomer) {
+      setStatus("Select a customer before requesting edits.", "error");
+      return;
+    }
+
+    const validationError = validateCustomerForm(editForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    const payload = normalizeCustomerForm(editForm);
+
+    setStatus("Submitting edit request...", "info");
+
+    try {
+      const response = await fetch(`/customers/${selectedCustomer.id}/edit-requests`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify(payload)
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      setStatus("Customer edit request submitted for Admin review.", "success");
+      await loadCustomerEditRequests(selectedCustomer.id);
+      await loadAuditLogs(selectedCustomer.id);
+    } catch (error) {
+      console.error(error);
+      setStatus("Failed to submit edit request. Check the API and try again.", "error");
+    }
+  }
+
+  async function handleEditRequestDecision(requestId: string, decision: "approve" | "reject") {
+    if (!currentUser || !isAdmin) {
+      setStatus("Only Admin users can approve or reject edit requests.", "error");
+      return;
+    }
+
+    setStatus(`${decision === "approve" ? "Approving" : "Rejecting"} edit request...`, "info");
+
+    try {
+      const response = await fetch(`/customer-edit-requests/${requestId}/${decision}`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          note: decisionNote
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      setDecisionNote("");
+      setStatus(`Edit request ${decision === "approve" ? "approved" : "rejected"}.`, "success");
+
+      await loadPendingEditRequests();
+
+      if (selectedCustomer) {
+        await loadCustomers();
+        await loadCustomerEditRequests(selectedCustomer.id);
+        await loadAuditLogs(selectedCustomer.id);
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(`Failed to ${decision} edit request. Check the API and try again.`, "error");
     }
   }
 
@@ -726,6 +920,10 @@ function App() {
 
     return new Date(b.createdAtUtc).getTime() - new Date(a.createdAtUtc).getTime();
   });
+
+  const sortedEditRequests = [...customerEditRequests].sort(
+    (a, b) => new Date(b.createdAtUtc).getTime() - new Date(a.createdAtUtc).getTime()
+  );
 
   if (!currentUser) {
     return (
@@ -991,46 +1189,97 @@ function App() {
       </main>
 
       {isAdmin && (
-        <section className="card">
-          <div className="section-header compact-header">
-            <h2>Create Staff User</h2>
-            <span className="status-chip status-chip-active">Admin Only</span>
-          </div>
-
-          <form className="customer-form" onSubmit={handleStaffUserSubmit}>
-            <div className="form-grid">
-              <label>
-                Display Name
-                <input
-                  value={staffUserForm.displayName}
-                  onChange={(e) => setStaffUserForm({ ...staffUserForm, displayName: e.target.value })}
-                  placeholder="Staff user name"
-                />
-              </label>
-
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={staffUserForm.email}
-                  onChange={(e) => setStaffUserForm({ ...staffUserForm, email: e.target.value })}
-                  placeholder="staff@example.com"
-                />
-              </label>
-
-              <label>
-                Temporary Password
-                <input
-                  type="password"
-                  value={staffUserForm.password}
-                  onChange={(e) => setStaffUserForm({ ...staffUserForm, password: e.target.value })}
-                  placeholder="At least 8 characters"
-                />
-              </label>
+        <section className="layout-grid">
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Create Staff User</h2>
+              <span className="status-chip status-chip-active">Admin Only</span>
             </div>
 
-            <button type="submit">Create Staff User</button>
-          </form>
+            <form className="customer-form" onSubmit={handleStaffUserSubmit}>
+              <div className="form-grid">
+                <label>
+                  Display Name
+                  <input
+                    value={staffUserForm.displayName}
+                    onChange={(e) => setStaffUserForm({ ...staffUserForm, displayName: e.target.value })}
+                    placeholder="Staff user name"
+                  />
+                </label>
+
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={staffUserForm.email}
+                    onChange={(e) => setStaffUserForm({ ...staffUserForm, email: e.target.value })}
+                    placeholder="staff@example.com"
+                  />
+                </label>
+
+                <label>
+                  Temporary Password
+                  <input
+                    type="password"
+                    value={staffUserForm.password}
+                    onChange={(e) => setStaffUserForm({ ...staffUserForm, password: e.target.value })}
+                    placeholder="At least 8 characters"
+                  />
+                </label>
+              </div>
+
+              <button type="submit">Create Staff User</button>
+            </form>
+          </section>
+
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Pending Edit Requests</h2>
+              <span className="count-chip">{pendingEditRequests.length}</span>
+            </div>
+
+            <label className="customer-form">
+              Decision Note
+              <textarea
+                value={decisionNote}
+                onChange={(e) => setDecisionNote(e.target.value)}
+                placeholder="Optional approval/rejection note..."
+                rows={2}
+              />
+            </label>
+
+            <div className="stack-list compact-list">
+              {pendingEditRequests.length === 0 ? (
+                <p className="muted-text">No pending edit requests.</p>
+              ) : (
+                pendingEditRequests.map((request) => (
+                  <div key={request.id} className="stack-item">
+                    <div className="stack-item-header">
+                      <strong>{request.requestedName}</strong>
+                      <span>{new Date(request.createdAtUtc).toLocaleString()}</span>
+                    </div>
+
+                    <div className="compact-content">
+                      Requested by {request.requestedByEmail}
+                    </div>
+
+                    <div className="muted-text compact-meta">
+                      {request.requestedType} · {request.requestedEmail || "No email"} · {request.requestedStatus}
+                    </div>
+
+                    <div className="note-actions-row">
+                      <button type="button" onClick={() => handleEditRequestDecision(request.id, "approve")}>
+                        Approve
+                      </button>
+                      <button type="button" onClick={() => handleEditRequestDecision(request.id, "reject")}>
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         </section>
       )}
 
@@ -1058,106 +1307,140 @@ function App() {
               </div>
             </div>
 
-            {isAdmin ? (
-              <form className="customer-form" onSubmit={handleCustomerUpdate}>
-                <div className="form-grid">
-                  <label>
-                    Name
-                    <input
-                      value={editForm.name}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                    />
-                  </label>
+            <form className="customer-form" onSubmit={isAdmin ? handleCustomerUpdate : handleEditRequestSubmit}>
+              <div className="form-grid">
+                <label>
+                  Name
+                  <input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Type
-                    <select
-                      value={editForm.type}
-                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
-                    >
-                      <option value="Company">Company</option>
-                      <option value="Person">Person</option>
-                    </select>
-                  </label>
+                <label>
+                  Type
+                  <select
+                    value={editForm.type}
+                    onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
+                  >
+                    <option value="Company">Company</option>
+                    <option value="Person">Person</option>
+                  </select>
+                </label>
 
-                  <label>
-                    Email
-                    <input
-                      type="email"
-                      value={editForm.email}
-                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Phone
-                    <input
-                      type="tel"
-                      value={editForm.phone}
-                      onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  Phone
+                  <input
+                    type="tel"
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Address Line 1
-                    <input
-                      value={editForm.addressLine1}
-                      onChange={(e) => setEditForm({ ...editForm, addressLine1: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  Address Line 1
+                  <input
+                    value={editForm.addressLine1}
+                    onChange={(e) => setEditForm({ ...editForm, addressLine1: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Address Line 2
-                    <input
-                      value={editForm.addressLine2}
-                      onChange={(e) => setEditForm({ ...editForm, addressLine2: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  Address Line 2
+                  <input
+                    value={editForm.addressLine2}
+                    onChange={(e) => setEditForm({ ...editForm, addressLine2: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    City
-                    <input
-                      value={editForm.city}
-                      onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  City
+                  <input
+                    value={editForm.city}
+                    onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    State
-                    <input
-                      value={editForm.state}
-                      onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  State
+                  <input
+                    value={editForm.state}
+                    onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Postal Code
-                    <input
-                      value={editForm.postalCode}
-                      onChange={(e) => setEditForm({ ...editForm, postalCode: e.target.value })}
-                    />
-                  </label>
+                <label>
+                  Postal Code
+                  <input
+                    value={editForm.postalCode}
+                    onChange={(e) => setEditForm({ ...editForm, postalCode: e.target.value })}
+                  />
+                </label>
 
-                  <label>
-                    Status
-                    <select
-                      value={editForm.status}
-                      onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-                    >
-                      <option value="Active">Active</option>
-                      <option value="Lead">Lead</option>
-                      <option value="Inactive">Inactive</option>
-                    </select>
-                  </label>
-                </div>
+                <label>
+                  Status
+                  <select
+                    value={editForm.status}
+                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Lead">Lead</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </label>
+              </div>
 
-                <button type="submit">Save Customer</button>
-              </form>
-            ) : (
+              <button type="submit">
+                {isAdmin ? "Save Customer" : "Submit Edit Request"}
+              </button>
+            </form>
+
+            {!isAdmin && (
               <div className="inline-state">
-                Staff users can create customers and view customer records. Customer edits require Admin access.
+                Staff edits are submitted for Admin approval before changing the customer record.
               </div>
             )}
+
+            <div className="stack-list compact-list">
+              <div className="section-header compact-header">
+                <h3>Edit Requests</h3>
+                <span className="count-chip">{customerEditRequests.length}</span>
+              </div>
+
+              {sortedEditRequests.length === 0 ? (
+                <p className="muted-text">No edit requests for this customer.</p>
+              ) : (
+                sortedEditRequests.map((request) => (
+                  <div key={request.id} className="stack-item">
+                    <div className="stack-item-header">
+                      <strong>{request.status}</strong>
+                      <span>{new Date(request.createdAtUtc).toLocaleString()}</span>
+                    </div>
+                    <div className="compact-content">
+                      Requested by {request.requestedByEmail}
+                    </div>
+                    <div className="muted-text compact-meta">
+                      Requested name: {request.requestedName}
+                    </div>
+                    {request.adminDecisionByEmail && (
+                      <div className="muted-text compact-meta">
+                        Decision by {request.adminDecisionByEmail}
+                        {request.adminDecisionNote ? ` · ${request.adminDecisionNote}` : ""}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </section>
 
           <section className="card">
@@ -1237,7 +1520,7 @@ function App() {
       ) : (
         <section className="card">
           <h2>No Customer Selected</h2>
-          <p>Select a customer from the list to view details, notes, and audit activity.</p>
+          <p>Select a customer from the list to view details, notes, audit activity, and edit requests.</p>
         </section>
       )}
     </div>

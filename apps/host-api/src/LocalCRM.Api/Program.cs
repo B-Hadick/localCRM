@@ -400,6 +400,212 @@ app.MapPut("/customers/{id:guid}", async (
     return Results.Ok(customer);
 }).RequireAuthorization("AdminOnly");
 
+app.MapPost("/customers/{customerId:guid}/edit-requests", async (
+    Guid customerId,
+    SubmitCustomerEditRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var caller = await GetCallerUserAsync(httpContext, db);
+    var performedBy = GetPerformedBy(httpContext);
+
+    if (caller is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var customer = await db.Customers.FindAsync(customerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var validationError = ValidateRequestedCustomerFields(input);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var request = new CustomerEditRequest
+    {
+        Id = Guid.NewGuid(),
+        CustomerId = customerId,
+        RequestedByUserId = caller.Id.ToString(),
+        RequestedByEmail = caller.Email,
+        Status = "Pending",
+        RequestedName = input.Name.Trim(),
+        RequestedType = input.Type.Trim(),
+        RequestedEmail = input.Email.Trim(),
+        RequestedPhone = input.Phone.Trim(),
+        RequestedAddressLine1 = input.AddressLine1.Trim(),
+        RequestedAddressLine2 = input.AddressLine2.Trim(),
+        RequestedCity = input.City.Trim(),
+        RequestedState = input.State.Trim(),
+        RequestedPostalCode = input.PostalCode.Trim(),
+        RequestedStatus = input.Status.Trim(),
+        CreatedAtUtc = DateTime.UtcNow,
+        UpdatedAtUtc = DateTime.UtcNow
+    };
+
+    db.CustomerEditRequests.Add(request);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Customer",
+        EntityId = customerId.ToString(),
+        Action = "EditRequested",
+        Details = $"Customer edit requested for '{customer.Name}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    logger.LogInformation("Customer edit requested for {CustomerId} by {PerformedBy}", customerId, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/customer-edit-requests/{request.Id}", request);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/customers/{customerId:guid}/edit-requests", async (
+    Guid customerId,
+    LocalCrmDbContext db) =>
+{
+    var requests = await db.CustomerEditRequests
+        .Where(r => r.CustomerId == customerId)
+        .OrderByDescending(r => r.CreatedAtUtc)
+        .Take(50)
+        .ToListAsync();
+
+    return Results.Ok(requests);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/customer-edit-requests", async (
+    string? status,
+    LocalCrmDbContext db) =>
+{
+    var query = db.CustomerEditRequests.AsQueryable();
+
+    if (!string.IsNullOrWhiteSpace(status) && status != "All")
+    {
+        query = query.Where(r => r.Status == status);
+    }
+
+    var requests = await query
+        .OrderByDescending(r => r.CreatedAtUtc)
+        .Take(100)
+        .ToListAsync();
+
+    return Results.Ok(requests);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/customer-edit-requests/{requestId:guid}/approve", async (
+    Guid requestId,
+    EditRequestDecision input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var request = await db.CustomerEditRequests.FindAsync(requestId);
+    if (request is null)
+    {
+        return Results.NotFound(new { error = "Edit request not found" });
+    }
+
+    if (request.Status != "Pending")
+    {
+        return Results.BadRequest(new { error = "Only pending edit requests can be approved" });
+    }
+
+    var customer = await db.Customers.FindAsync(request.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    customer.Name = request.RequestedName;
+    customer.Type = request.RequestedType;
+    customer.Email = request.RequestedEmail;
+    customer.Phone = request.RequestedPhone;
+    customer.AddressLine1 = request.RequestedAddressLine1;
+    customer.AddressLine2 = request.RequestedAddressLine2;
+    customer.City = request.RequestedCity;
+    customer.State = request.RequestedState;
+    customer.PostalCode = request.RequestedPostalCode;
+    customer.Status = request.RequestedStatus;
+    customer.UpdatedAtUtc = DateTime.UtcNow;
+
+    request.Status = "Approved";
+    request.AdminDecisionByEmail = performedBy;
+    request.AdminDecisionNote = input.Note.Trim();
+    request.DecidedAtUtc = DateTime.UtcNow;
+    request.UpdatedAtUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Customer",
+        EntityId = customer.Id.ToString(),
+        Action = "EditApproved",
+        Details = $"Customer edit request approved for '{customer.Name}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    logger.LogInformation("Customer edit request {RequestId} approved by {PerformedBy}", requestId, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(request);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/customer-edit-requests/{requestId:guid}/reject", async (
+    Guid requestId,
+    EditRequestDecision input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var request = await db.CustomerEditRequests.FindAsync(requestId);
+    if (request is null)
+    {
+        return Results.NotFound(new { error = "Edit request not found" });
+    }
+
+    if (request.Status != "Pending")
+    {
+        return Results.BadRequest(new { error = "Only pending edit requests can be rejected" });
+    }
+
+    request.Status = "Rejected";
+    request.AdminDecisionByEmail = performedBy;
+    request.AdminDecisionNote = input.Note.Trim();
+    request.DecidedAtUtc = DateTime.UtcNow;
+    request.UpdatedAtUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Customer",
+        EntityId = request.CustomerId.ToString(),
+        Action = "EditRejected",
+        Details = "Customer edit request rejected.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    logger.LogInformation("Customer edit request {RequestId} rejected by {PerformedBy}", requestId, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(request);
+}).RequireAuthorization("AdminOnly");
+
 app.MapGet("/customers/{customerId:guid}/notes", async (Guid customerId, LocalCrmDbContext db) =>
 {
     var notes = await db.CustomerNotes
@@ -516,6 +722,40 @@ static async Task<User?> GetCallerUserAsync(HttpContext httpContext, LocalCrmDbC
         u.IsActive);
 }
 
+static string ValidateRequestedCustomerFields(SubmitCustomerEditRequest input)
+{
+    var name = input.Name.Trim();
+    var type = input.Type.Trim();
+    var status = input.Status.Trim();
+
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        return "Customer name is required";
+    }
+
+    if (name.Length < 2)
+    {
+        return "Customer name must be at least 2 characters";
+    }
+
+    if (type != "Company" && type != "Person")
+    {
+        return "Customer type must be Company or Person";
+    }
+
+    if (status != "Active" && status != "Lead" && status != "Inactive")
+    {
+        return "Customer status must be Active, Lead, or Inactive";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Email) && !IsValidEmail(input.Email.Trim()))
+    {
+        return "A valid email address is required";
+    }
+
+    return "";
+}
+
 static JwtTokenResult CreateJwtToken(User user, IConfiguration config)
 {
     var issuer = config["Jwt:Issuer"] ?? "LocalCRM.Api";
@@ -609,6 +849,21 @@ public record CreateStaffUserRequest(
     string Email,
     string Password
 );
+
+public record SubmitCustomerEditRequest(
+    string Name,
+    string Type,
+    string Email,
+    string Phone,
+    string AddressLine1,
+    string AddressLine2,
+    string City,
+    string State,
+    string PostalCode,
+    string Status
+);
+
+public record EditRequestDecision(string Note);
 
 public record AuthUserResponse(
     Guid Id,

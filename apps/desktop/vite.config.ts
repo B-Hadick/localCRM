@@ -27,6 +27,10 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true
       },
+      "/customer-edit-requests": {
+        target: "http://localhost:8080",
+        changeOrigin: true
+      },
       "/audit": {
         target: "http://localhost:8080",
         changeOrigin: true
