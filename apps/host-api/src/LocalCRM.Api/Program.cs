@@ -807,6 +807,271 @@ app.MapGet("/dashboard/summary", async (LocalCrmDbContext db) =>
     ));
 }).RequireAuthorization("AdminOrOwner");
 
+
+app.MapGet("/quotes", async (
+    string? q,
+    string? status,
+    string? sortBy,
+    string? sortDirection,
+    Guid? customerId,
+    DateTime? from,
+    DateTime? to,
+    LocalCrmDbContext db) =>
+{
+    var nowUtc = DateTime.UtcNow;
+
+    await ExpireOverdueQuotesAsync(db, nowUtc);
+
+    var query = db.Quotes.AsQueryable();
+
+    if (customerId.HasValue)
+    {
+        query = query.Where(quote => quote.CustomerId == customerId.Value);
+    }
+
+    if (!string.IsNullOrWhiteSpace(status) && status != "All")
+    {
+        query = query.Where(quote => quote.Status == status);
+    }
+
+    if (from.HasValue)
+    {
+        var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        query = query.Where(quote => quote.QuoteDateUtc >= fromUtc);
+    }
+
+    if (to.HasValue)
+    {
+        var toUtcExclusive = DateTime.SpecifyKind(to.Value.Date.AddDays(1), DateTimeKind.Utc);
+        query = query.Where(quote => quote.QuoteDateUtc < toUtcExclusive);
+    }
+
+    var quoteRows = await query.ToListAsync();
+
+    var customerIds = quoteRows
+        .Select(quote => quote.CustomerId)
+        .Distinct()
+        .ToList();
+
+    var customers = await db.Customers
+        .Where(customer => customerIds.Contains(customer.Id))
+        .ToDictionaryAsync(customer => customer.Id);
+
+    var responses = quoteRows
+        .Select(quote =>
+        {
+            customers.TryGetValue(quote.CustomerId, out var customer);
+
+            return ToQuoteResponse(
+                quote,
+                customer?.Name ?? "Unknown Customer"
+            );
+        })
+        .ToList();
+
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        var search = q.Trim().ToLower();
+
+        responses = responses
+            .Where(quote =>
+                quote.CustomerName.ToLower().Contains(search) ||
+                quote.QuoteNumber.ToLower().Contains(search) ||
+                quote.Title.ToLower().Contains(search) ||
+                quote.Description.ToLower().Contains(search))
+            .ToList();
+    }
+
+    var descending = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase);
+
+    responses = (sortBy ?? "date").Trim().ToLowerInvariant() switch
+    {
+        "status" => descending
+            ? responses.OrderByDescending(quote => quote.Status).ThenByDescending(quote => quote.QuoteDateUtc).ToList()
+            : responses.OrderBy(quote => quote.Status).ThenByDescending(quote => quote.QuoteDateUtc).ToList(),
+
+        "name" or "customer" => descending
+            ? responses.OrderByDescending(quote => quote.CustomerName).ThenByDescending(quote => quote.QuoteDateUtc).ToList()
+            : responses.OrderBy(quote => quote.CustomerName).ThenByDescending(quote => quote.QuoteDateUtc).ToList(),
+
+        "amount" => descending
+            ? responses.OrderByDescending(quote => quote.Amount).ThenByDescending(quote => quote.QuoteDateUtc).ToList()
+            : responses.OrderBy(quote => quote.Amount).ThenByDescending(quote => quote.QuoteDateUtc).ToList(),
+
+        _ => descending
+            ? responses.OrderByDescending(quote => quote.QuoteDateUtc).ToList()
+            : responses.OrderBy(quote => quote.QuoteDateUtc).ToList()
+    };
+
+    return Results.Ok(responses.Take(250).ToList());
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/customers/{customerId:guid}/quotes", async (
+    Guid customerId,
+    LocalCrmDbContext db) =>
+{
+    var nowUtc = DateTime.UtcNow;
+
+    await ExpireOverdueQuotesAsync(db, nowUtc);
+
+    var customer = await db.Customers.FindAsync(customerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var quotes = await db.Quotes
+        .Where(quote => quote.CustomerId == customerId)
+        .OrderByDescending(quote => quote.QuoteDateUtc)
+        .Take(100)
+        .ToListAsync();
+
+    var response = quotes
+        .Select(quote => ToQuoteResponse(quote, customer.Name))
+        .ToList();
+
+    return Results.Ok(response);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/quotes", async (
+    CreateQuoteRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var validationError = ValidateQuoteInput(input);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var customer = await db.Customers.FindAsync(input.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var status = string.IsNullOrWhiteSpace(input.Status)
+        ? "Draft"
+        : input.Status.Trim();
+
+    if (!IsValidQuoteStatus(status))
+    {
+        return Results.BadRequest(new { error = "Quote status must be Draft, Sent, Accepted, Rejected, or Expired" });
+    }
+
+    var quote = new Quote
+    {
+        Id = Guid.NewGuid(),
+        CustomerId = input.CustomerId,
+        QuoteNumber = await GenerateQuoteNumberAsync(db, nowUtc),
+        Title = input.Title.Trim(),
+        Description = input.Description.Trim(),
+        Amount = input.Amount,
+        Status = status,
+        QuoteDateUtc = nowUtc,
+        SentAtUtc = status == "Sent" ? nowUtc : null,
+        AcceptedAtUtc = status == "Accepted" ? nowUtc : null,
+        RejectedAtUtc = status == "Rejected" ? nowUtc : null,
+        ExpiredAtUtc = status == "Expired" ? nowUtc : null,
+        CreatedAtUtc = nowUtc,
+        UpdatedAtUtc = nowUtc
+    };
+
+    db.Quotes.Add(quote);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Quote",
+        EntityId = quote.Id.ToString(),
+        Action = "QuoteCreated",
+        Details = $"Quote '{quote.QuoteNumber}' created for customer '{customer.Name}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Quote {QuoteNumber} created for customer {CustomerId} by {PerformedBy}", quote.QuoteNumber, customer.Id, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/quotes/{quote.Id}", ToQuoteResponse(quote, customer.Name));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/quotes/{quoteId:guid}/status", async (
+    Guid quoteId,
+    UpdateQuoteStatusRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var nowUtc = DateTime.UtcNow;
+
+    var quote = await db.Quotes.FindAsync(quoteId);
+    if (quote is null)
+    {
+        return Results.NotFound(new { error = "Quote not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(quote.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var status = input.Status.Trim();
+    if (!IsValidQuoteStatus(status))
+    {
+        return Results.BadRequest(new { error = "Quote status must be Draft, Sent, Accepted, Rejected, or Expired" });
+    }
+
+    var previousStatus = quote.Status;
+
+    quote.Status = status;
+    quote.UpdatedAtUtc = nowUtc;
+
+    if (status == "Sent" && quote.SentAtUtc is null)
+    {
+        quote.SentAtUtc = nowUtc;
+    }
+
+    if (status == "Accepted")
+    {
+        quote.AcceptedAtUtc = nowUtc;
+    }
+
+    if (status == "Rejected")
+    {
+        quote.RejectedAtUtc = nowUtc;
+    }
+
+    if (status == "Expired")
+    {
+        quote.ExpiredAtUtc = nowUtc;
+    }
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Quote",
+        EntityId = quote.Id.ToString(),
+        Action = "QuoteStatusChanged",
+        Details = $"Quote '{quote.QuoteNumber}' status changed from '{previousStatus}' to '{quote.Status}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Quote {QuoteNumber} status changed from {PreviousStatus} to {Status} by {PerformedBy}", quote.QuoteNumber, previousStatus, quote.Status, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(ToQuoteResponse(quote, customer.Name));
+}).RequireAuthorization("AdminOrOwner");
+
 app.MapGet("/customer-edit-requests", async (
     string? status,
     string? requestedBy,
@@ -1092,6 +1357,110 @@ app.MapGet("/audit", async (
 
 app.Run();
 
+static async Task ExpireOverdueQuotesAsync(LocalCrmDbContext db, DateTime nowUtc)
+{
+    var expirationCutoff = nowUtc.AddDays(-30);
+
+    var overdueQuotes = await db.Quotes
+        .Where(q =>
+            q.Status == "Sent" &&
+            q.SentAtUtc.HasValue &&
+            q.SentAtUtc.Value <= expirationCutoff)
+        .ToListAsync();
+
+    if (overdueQuotes.Count == 0)
+    {
+        return;
+    }
+
+    foreach (var quote in overdueQuotes)
+    {
+        quote.Status = "Expired";
+        quote.ExpiredAtUtc = nowUtc;
+        quote.UpdatedAtUtc = nowUtc;
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Quote",
+            EntityId = quote.Id.ToString(),
+            Action = "QuoteExpired",
+            Details = $"Quote '{quote.QuoteNumber}' automatically expired after 30 days.",
+            PerformedBy = "system",
+            CreatedAtUtc = nowUtc
+        });
+    }
+
+    await db.SaveChangesAsync();
+}
+
+static async Task<string> GenerateQuoteNumberAsync(LocalCrmDbContext db, DateTime nowUtc)
+{
+    var prefix = $"Q-{nowUtc:yyyyMMdd}";
+    var countForDay = await db.Quotes.CountAsync(q => q.QuoteNumber.StartsWith(prefix));
+    return $"{prefix}-{countForDay + 1:0000}";
+}
+
+static QuoteListResponse ToQuoteResponse(Quote quote, string customerName)
+{
+    return new QuoteListResponse(
+        quote.Id,
+        quote.CustomerId,
+        customerName,
+        quote.QuoteNumber,
+        quote.Title,
+        quote.Description,
+        quote.Amount,
+        quote.Status,
+        quote.QuoteDateUtc,
+        quote.SentAtUtc,
+        quote.AcceptedAtUtc,
+        quote.RejectedAtUtc,
+        quote.ExpiredAtUtc,
+        quote.CreatedAtUtc,
+        quote.UpdatedAtUtc
+    );
+}
+
+static string ValidateQuoteInput(CreateQuoteRequest input)
+{
+    if (input.CustomerId == Guid.Empty)
+    {
+        return "Customer is required";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Title))
+    {
+        return "Quote title is required";
+    }
+
+    if (input.Title.Trim().Length < 2)
+    {
+        return "Quote title must be at least 2 characters";
+    }
+
+    if (input.Amount < 0)
+    {
+        return "Quote amount cannot be negative";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Status) && !IsValidQuoteStatus(input.Status.Trim()))
+    {
+        return "Quote status must be Draft, Sent, Accepted, Rejected, or Expired";
+    }
+
+    return "";
+}
+
+static bool IsValidQuoteStatus(string status)
+{
+    return status == "Draft" ||
+        status == "Sent" ||
+        status == "Accepted" ||
+        status == "Rejected" ||
+        status == "Expired";
+}
+
 static string GetPerformedBy(HttpContext httpContext)
 {
     var email = httpContext.User.FindFirstValue(ClaimTypes.Email);
@@ -1324,6 +1693,36 @@ static bool IsValidEmail(string email)
 {
     return email.Contains('@') && email.Contains('.');
 }
+
+public record CreateQuoteRequest(
+    Guid CustomerId,
+    string Title,
+    string Description,
+    decimal Amount,
+    string Status
+);
+
+public record UpdateQuoteStatusRequest(
+    string Status
+);
+
+public record QuoteListResponse(
+    Guid Id,
+    Guid CustomerId,
+    string CustomerName,
+    string QuoteNumber,
+    string Title,
+    string Description,
+    decimal Amount,
+    string Status,
+    DateTime QuoteDateUtc,
+    DateTime? SentAtUtc,
+    DateTime? AcceptedAtUtc,
+    DateTime? RejectedAtUtc,
+    DateTime? ExpiredAtUtc,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc
+);
 
 public record LoginRequest(string Email, string Password);
 
