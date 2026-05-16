@@ -157,6 +157,41 @@ type AuditFilters = {
   to: string;
 };
 
+type Quote = {
+  id: string;
+  customerId: string;
+  customerName: string;
+  quoteNumber: string;
+  title: string;
+  description: string;
+  amount: number;
+  status: string;
+  quoteDateUtc: string;
+  sentAtUtc: string | null;
+  acceptedAtUtc: string | null;
+  rejectedAtUtc: string | null;
+  expiredAtUtc: string | null;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+};
+
+type QuoteForm = {
+  customerId: string;
+  title: string;
+  description: string;
+  amount: string;
+  status: string;
+};
+
+type QuoteFilters = {
+  q: string;
+  status: string;
+  sortBy: string;
+  sortDirection: string;
+  from: string;
+  to: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -203,6 +238,23 @@ const emptyAuditFilters: AuditFilters = {
   to: ""
 };
 
+const emptyQuoteForm: QuoteForm = {
+  customerId: "",
+  title: "",
+  description: "",
+  amount: "",
+  status: "Draft"
+};
+
+const emptyQuoteFilters: QuoteFilters = {
+  q: "",
+  status: "All",
+  sortBy: "date",
+  sortDirection: "desc",
+  from: "",
+  to: ""
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -236,6 +288,8 @@ function App() {
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary>(emptyDashboardSummary);
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [globalAuditLogs, setGlobalAuditLogs] = useState<AuditLog[]>([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [customerQuotes, setCustomerQuotes] = useState<Quote[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -254,11 +308,14 @@ function App() {
   const [requestFromDate, setRequestFromDate] = useState("");
   const [requestToDate, setRequestToDate] = useState("");
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
+  const [quoteFilters, setQuoteFilters] = useState<QuoteFilters>(emptyQuoteFilters);
 
   const [noteForm, setNoteForm] = useState({
     content: "",
     isPinned: false
   });
+
+  const [quoteForm, setQuoteForm] = useState<QuoteForm>(emptyQuoteForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -463,6 +520,36 @@ function App() {
     return "";
   }
 
+  function validateQuoteForm(input: QuoteForm) {
+    if (!input.customerId) {
+      return "Select a customer before creating a quote.";
+    }
+
+    if (!input.title.trim()) {
+      return "Quote title is required.";
+    }
+
+    if (input.title.trim().length < 2) {
+      return "Quote title must be at least 2 characters.";
+    }
+
+    const amount = Number(input.amount);
+
+    if (Number.isNaN(amount)) {
+      return "Quote amount must be a valid number.";
+    }
+
+    if (amount < 0) {
+      return "Quote amount cannot be negative.";
+    }
+
+    if (!["Draft", "Sent", "Accepted", "Rejected", "Expired"].includes(input.status)) {
+      return "Quote status must be Draft, Sent, Accepted, Rejected, or Expired.";
+    }
+
+    return "";
+  }
+
   function customerToForm(customer: Customer): CustomerForm {
     return {
       name: customer.name || "",
@@ -482,6 +569,21 @@ function App() {
     const normalized = value?.trim();
 
     return normalized ? normalized : "—";
+  }
+
+  function formatCurrency(amount: number) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD"
+    }).format(amount || 0);
+  }
+
+  function formatDate(value: string | null | undefined) {
+    if (!value) {
+      return "—";
+    }
+
+    return new Date(value).toLocaleDateString();
   }
 
   function valuesAreDifferent(currentValue: string | null | undefined, requestedValue: string | null | undefined) {
@@ -524,6 +626,8 @@ function App() {
     setNotes([]);
     setAuditLogs([]);
     setGlobalAuditLogs([]);
+    setQuotes([]);
+    setCustomerQuotes([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -628,6 +732,8 @@ function App() {
     setNotes([]);
     setAuditLogs([]);
     setGlobalAuditLogs([]);
+    setQuotes([]);
+    setCustomerQuotes([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -846,6 +952,91 @@ function App() {
     }
   }
 
+  async function loadQuotes() {
+    if (!currentUser) {
+      setQuotes([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (quoteFilters.q.trim()) {
+        params.set("q", quoteFilters.q.trim());
+      }
+
+      if (quoteFilters.status !== "All") {
+        params.set("status", quoteFilters.status);
+      }
+
+      if (quoteFilters.sortBy) {
+        params.set("sortBy", quoteFilters.sortBy);
+      }
+
+      if (quoteFilters.sortDirection) {
+        params.set("sortDirection", quoteFilters.sortDirection);
+      }
+
+      if (quoteFilters.from) {
+        params.set("from", quoteFilters.from);
+      }
+
+      if (quoteFilters.to) {
+        params.set("to", quoteFilters.to);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/quotes?${queryString}` : "/quotes";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as Quote[];
+      setQuotes(data);
+    } catch (error) {
+      console.error(error);
+      setQuotes([]);
+      setStatus("Failed to load quotes", "error");
+    }
+  }
+
+  async function loadCustomerQuotes(customerId: string) {
+    if (!currentUser) {
+      setCustomerQuotes([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/customers/${customerId}/quotes`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as Quote[];
+      setCustomerQuotes(data);
+    } catch (error) {
+      console.error(error);
+      setCustomerQuotes([]);
+      setStatus("Failed to load customer quotes", "error");
+    }
+  }
+
   async function loadCustomerNotes(customerId: string) {
     if (!currentUser) {
       return;
@@ -1027,8 +1218,19 @@ function App() {
   useEffect(() => {
     if (currentUser) {
       loadCustomers();
+      loadQuotes();
     }
-  }, [currentUser, searchTerm, statusFilter]);
+  }, [
+    currentUser,
+    searchTerm,
+    statusFilter,
+    quoteFilters.q,
+    quoteFilters.status,
+    quoteFilters.sortBy,
+    quoteFilters.sortDirection,
+    quoteFilters.from,
+    quoteFilters.to
+  ]);
 
   useEffect(() => {
     if (currentUser && isAdminOrOwner) {
@@ -1060,6 +1262,11 @@ function App() {
       loadCustomerNotes(selectedCustomer.id);
       loadAuditLogs(selectedCustomer.id);
       loadCustomerEditRequests(selectedCustomer.id);
+      loadCustomerQuotes(selectedCustomer.id);
+      setQuoteForm((current) => ({
+        ...current,
+        customerId: selectedCustomer.id
+      }));
     }
   }, [selectedCustomer]);
 
@@ -1319,6 +1526,123 @@ function App() {
     }
   }
 
+  async function handleQuoteSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before creating quotes.", "error");
+      return;
+    }
+
+    const validationError = validateQuoteForm(quoteForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Creating quote...", "info");
+
+    try {
+      const response = await fetch("/quotes", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          customerId: quoteForm.customerId,
+          title: quoteForm.title.trim(),
+          description: quoteForm.description.trim(),
+          amount: Number(quoteForm.amount),
+          status: quoteForm.status
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const createdQuote = (await response.json()) as Quote;
+
+      setQuoteForm({
+        ...emptyQuoteForm,
+        customerId: selectedCustomer?.id ?? ""
+      });
+      setStatus(`Quote "${createdQuote.quoteNumber}" created successfully.`, "success");
+      await loadQuotes();
+
+      if (selectedCustomer) {
+        await loadCustomerQuotes(selectedCustomer.id);
+        await loadAuditLogs(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to create quote.", "error");
+    }
+  }
+
+  async function handleQuoteStatusUpdate(quoteId: string, status: string) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can update quote status.", "error");
+      return;
+    }
+
+    setStatus("Updating quote status...", "info");
+
+    try {
+      const response = await fetch(`/quotes/${quoteId}/status`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({ status })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setStatus(`Quote marked ${status}.`, "success");
+      await loadQuotes();
+
+      if (selectedCustomer) {
+        await loadCustomerQuotes(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to update quote status.", "error");
+    }
+  }
+
   async function handleAdminUserSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -1540,6 +1864,10 @@ function App() {
     setAuditFilters(emptyAuditFilters);
   }
 
+  function clearQuoteFilters() {
+    setQuoteFilters(emptyQuoteFilters);
+  }
+
   const staffUsers = users.filter((user) => user.role === "Staff" && user.isActive);
 
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
@@ -1556,6 +1884,14 @@ function App() {
     auditFilters.performedBy.trim() ||
     auditFilters.from ||
     auditFilters.to;
+
+  const hasQuoteFilters =
+    quoteFilters.q.trim() ||
+    quoteFilters.status !== "All" ||
+    quoteFilters.sortBy !== "date" ||
+    quoteFilters.sortDirection !== "desc" ||
+    quoteFilters.from ||
+    quoteFilters.to;
 
   const sortedNotes = [...notes].sort((a, b) => {
     if (a.isPinned !== b.isPinned) {
@@ -1968,6 +2304,209 @@ function App() {
         </section>
       </main>
 
+      <section className="layout-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Quotes</h2>
+            <span className="count-chip">{quotes.length}</span>
+          </div>
+
+          <div className="quote-filter-grid">
+            <label>
+              Search
+              <input
+                value={quoteFilters.q}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, q: e.target.value })}
+                placeholder="Quote number, customer, title..."
+              />
+            </label>
+
+            <label>
+              Status
+              <select
+                value={quoteFilters.status}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, status: e.target.value })}
+              >
+                <option value="All">All Statuses</option>
+                <option value="Draft">Draft</option>
+                <option value="Sent">Sent</option>
+                <option value="Accepted">Accepted</option>
+                <option value="Rejected">Rejected</option>
+                <option value="Expired">Expired</option>
+              </select>
+            </label>
+
+            <label>
+              Sort By
+              <select
+                value={quoteFilters.sortBy}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, sortBy: e.target.value })}
+              >
+                <option value="date">Date</option>
+                <option value="status">Status</option>
+                <option value="name">Customer/Name</option>
+                <option value="amount">Amount</option>
+              </select>
+            </label>
+
+            <label>
+              Direction
+              <select
+                value={quoteFilters.sortDirection}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, sortDirection: e.target.value })}
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
+
+            <label>
+              From
+              <input
+                type="date"
+                value={quoteFilters.from}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, from: e.target.value })}
+              />
+            </label>
+
+            <label>
+              To
+              <input
+                type="date"
+                value={quoteFilters.to}
+                onChange={(e) => setQuoteFilters({ ...quoteFilters, to: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="note-actions-row">
+            <button type="button" onClick={loadQuotes}>
+              Refresh Quotes
+            </button>
+
+            <button type="button" onClick={clearQuoteFilters} disabled={!hasQuoteFilters}>
+              Clear Quote Filters
+            </button>
+          </div>
+
+          <div className="stack-list compact-list quote-list">
+            {quotes.length === 0 ? (
+              <p className="muted-text">No quotes match the selected filters.</p>
+            ) : (
+              quotes.map((quote) => (
+                <div key={quote.id} className="stack-item quote-item">
+                  <div className="stack-item-header">
+                    <strong>{quote.quoteNumber}</strong>
+                    <span className={`status-chip status-chip-${quote.status.toLowerCase()}`}>
+                      {quote.status}
+                    </span>
+                  </div>
+
+                  <div className="compact-content">
+                    {quote.title} · {quote.customerName}
+                  </div>
+
+                  <div className="muted-text compact-meta">
+                    {formatCurrency(quote.amount)} · Quote date {formatDate(quote.quoteDateUtc)}
+                    {quote.sentAtUtc ? ` · Sent ${formatDate(quote.sentAtUtc)}` : ""}
+                  </div>
+
+                  {isAdminOrOwner && (
+                    <div className="quote-status-row">
+                      <button type="button" onClick={() => handleQuoteStatusUpdate(quote.id, "Sent")}>
+                        Sent
+                      </button>
+                      <button type="button" onClick={() => handleQuoteStatusUpdate(quote.id, "Accepted")}>
+                        Accept
+                      </button>
+                      <button type="button" onClick={() => handleQuoteStatusUpdate(quote.id, "Rejected")}>
+                        Reject
+                      </button>
+                      <button type="button" onClick={() => handleQuoteStatusUpdate(quote.id, "Expired")}>
+                        Expire
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Create Quote</h2>
+            <span className="status-chip status-chip-active">Phase 11a</span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleQuoteSubmit}>
+            <div className="form-grid">
+              <label>
+                Customer
+                <select
+                  value={quoteForm.customerId}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, customerId: e.target.value })}
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Title
+                <input
+                  value={quoteForm.title}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, title: e.target.value })}
+                  placeholder="Quote title"
+                />
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  value={quoteForm.description}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, description: e.target.value })}
+                  placeholder="Scope summary or quote notes..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Amount
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={quoteForm.amount}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, amount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </label>
+
+              <label>
+                Initial Status
+                <select
+                  value={quoteForm.status}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, status: e.target.value })}
+                >
+                  <option value="Draft">Draft</option>
+                  <option value="Sent">Sent</option>
+                  <option value="Accepted">Accepted</option>
+                  <option value="Rejected">Rejected</option>
+                  <option value="Expired">Expired</option>
+                </select>
+              </label>
+            </div>
+
+            <button type="submit">Create Quote</button>
+          </form>
+        </section>
+      </section>
+
       {isAdminOrOwner && (
         <section className="layout-grid">
           {isOwner && (
@@ -2312,6 +2851,37 @@ function App() {
                   .filter(Boolean)
                   .join(", ") || "No address on file"}
               </div>
+            </div>
+
+            <div className="stack-list compact-list">
+              <div className="section-header compact-header">
+                <h3>Customer Quotes</h3>
+                <span className="count-chip">{customerQuotes.length}</span>
+              </div>
+
+              {customerQuotes.length === 0 ? (
+                <p className="muted-text">No quotes for this customer yet.</p>
+              ) : (
+                customerQuotes.map((quote) => (
+                  <div key={quote.id} className="stack-item quote-item">
+                    <div className="stack-item-header">
+                      <strong>{quote.quoteNumber}</strong>
+                      <span className={`status-chip status-chip-${quote.status.toLowerCase()}`}>
+                        {quote.status}
+                      </span>
+                    </div>
+
+                    <div className="compact-content">
+                      {quote.title} · {formatCurrency(quote.amount)}
+                    </div>
+
+                    <div className="muted-text compact-meta">
+                      Quote date {formatDate(quote.quoteDateUtc)}
+                      {quote.sentAtUtc ? ` · Sent ${formatDate(quote.sentAtUtc)}` : ""}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
             <form className="customer-form" onSubmit={isAdminOrOwner ? handleCustomerUpdate : handleEditRequestSubmit}>

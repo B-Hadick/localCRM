@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -14,6 +14,8 @@ Owner/Admin/Staff role enforcement
 Backend-backed search/filtering
 Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
+Quote record workflow
+Quote status workflow
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -22,7 +24,7 @@ Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
 Admin/Owner Staff password reset workflow
 Owner-only Admin user creation workflow
-Security-sensitive audit events for login, password changes/resets, and user creation
+Security-sensitive audit events for login, password changes/resets, user creation, and quote activity
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -35,6 +37,10 @@ JWT-backed authenticated API requests
 Owner/Admin/Staff role-aware controls
 Staff edit-request submission workflow
 Admin/Owner approval/rejection workflow
+Quote creation workflow
+Quote list/search/filter/sort workflow
+Quote status controls
+Customer-specific quote history
 Current-vs-requested edit review UI
 Changed-field highlighting
 Edit request status/requester/date filtering
@@ -90,17 +96,22 @@ Owner users can create Staff users
 Owner users can reset Staff passwords
 Owner users can create, edit, and review customer workflows
 Owner users can review global audit activity
+Owner users can create quotes and manage quote statuses
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
 Admin users can reset Staff passwords
 Admin users can review global audit activity
+Admin users can create quotes and manage quote statuses
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
 Staff users can view customer notes and customer-specific audit activity
+Staff users can create quotes
+Staff users can view quote records
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
+Staff users cannot manage quote status transitions
 Staff users can submit customer edit requests
 Owner/Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Owner-only Admin creation
@@ -109,6 +120,7 @@ Backend enforces Admin/Owner customer edits
 Backend enforces Admin/Owner Staff password reset
 Backend enforces Admin/Owner edit-request approval/rejection
 Backend enforces Admin/Owner-only global audit review
+Backend enforces Admin/Owner-only quote status updates
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -143,12 +155,41 @@ Edit customer profile fields as Admin/Owner
 Submit customer profile edits as Staff for approval
 Store customer contact and address details
 Persist customer changes in PostgreSQL
+Quote Management
+Create quote records linked to customers
+Store quote number, title, description, amount, status, and dates
+Automatically generate quote numbers
+View global quote list
+View customer-specific quote history under Customer Detail
+Search quotes by customer name, quote number, title, and description
+Filter quotes by status
+Filter quotes by quote date range
+Sort quotes by:
+Date
+Status
+Customer/name
+Amount
+Supported quote statuses:
+Draft
+Sent
+Accepted
+Rejected
+Expired
+Admin/Owner users can update quote statuses
+Sent quotes are automatically marked expired after 30 days if not otherwise updated
+Quote creation is audit logged
+Quote status changes are audit logged
+Automatic quote expiration is audit logged
+DOCX/PDF import/export and physical printing are planned for the next quote/document layer
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
 Filter customers by status
 Combine text search with status filtering
 Customer result count display
+Backend-backed quote search/filter/sort
+Backend-backed audit search/filter
+Backend-backed edit request filtering
 Customer Notes
 Add notes to a selected customer
 Mark notes as pinned
@@ -169,6 +210,9 @@ Audit entries for Staff user creation
 Audit entries for Admin user creation
 Audit entries for successful logins
 Audit entries for failed login attempts
+Audit entries for quote creation
+Audit entries for quote status changes
+Audit entries for automatic quote expiration
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -193,11 +237,15 @@ Edit request history display
 Current-vs-requested comparison grid
 Changed-field highlighting
 Edit request status/requester/date filtering
+Quote form state
+Quote filter/sort state
+Quote status action state
+Customer quote history state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
 Global audit review filter state
-Clear validation messages for customer, note, login, Staff user, Admin user, password, audit, and edit request forms
+Clear validation messages for customer, quote, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -223,6 +271,11 @@ Customers
 `GET /customers/{id}`
 `POST /customers`
 `PUT /customers/{id}`
+Quotes
+`GET /quotes?q=&status=&sortBy=&sortDirection=&customerId=&from=&to=`
+`GET /customers/{customerId}/quotes`
+`POST /quotes`
+`POST /quotes/{quoteId}/status`
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
@@ -247,6 +300,9 @@ Require a valid JWT bearer token:
 `GET /customers/search`
 `GET /customers/{id}`
 `POST /customers`
+`GET /quotes?q=&status=&sortBy=&sortDirection=&customerId=&from=&to=`
+`GET /customers/{customerId}/quotes`
+`POST /quotes`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -259,6 +315,7 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `PUT /customers/{id}`
 `POST /users/staff`
 `POST /users/{userId}/reset-password`
+`POST /quotes/{quoteId}/status`
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
@@ -275,6 +332,9 @@ Entity Framework migrations and schema management
 PostgreSQL-backed persistence
 Backend query/filter design
 Customer workflow modeling
+Quote workflow modeling
+Quote status lifecycle handling
+Automatic expiration logic
 Staff-to-Admin approval workflow design
 Current-vs-requested approval review patterns
 Dashboard summary/reporting endpoint design
@@ -662,6 +722,58 @@ Sign in as Admin and confirm Audit Review is available.
 Sign in as Staff and confirm global Audit Review is not visible.
 Confirm customer-specific audit activity still appears under Customer Detail.
 ---
+✅ Phase 11a — Completed
+Phase 11a added database-backed quote records, quote filtering/sorting, customer quote history, and quote status workflow.
+Implemented
+`Quote` model
+`Quotes` database table
+EF Core migration for quotes
+`DbSet<Quote>` and quote model configuration
+Quote number generation
+Quote creation endpoint:
+`POST /quotes`
+Global quote list/search/filter/sort endpoint:
+`GET /quotes?q=&status=&sortBy=&sortDirection=&customerId=&from=&to=`
+Customer-specific quote history endpoint:
+`GET /customers/{customerId}/quotes`
+Quote status update endpoint:
+`POST /quotes/{quoteId}/status`
+Supported quote statuses:
+`Draft`
+`Sent`
+`Accepted`
+`Rejected`
+`Expired`
+Automatic expiration of sent quotes after 30 days
+Quote creation audit event:
+`QuoteCreated`
+Quote status change audit event:
+`QuoteStatusChanged`
+Automatic quote expiration audit event:
+`QuoteExpired`
+Frontend global Quotes panel
+Frontend quote creation form
+Frontend quote search/filter/sort controls
+Frontend quote status action controls
+Frontend customer-specific quote history under Customer Detail
+Vite proxy support for `/quotes`
+Fixed quote read endpoints by avoiding EF Core projection/sort translation issues
+Verified Flow
+Sign in as Owner or Admin.
+Create a quote linked to a customer.
+Confirm quote creation appears in Audit Review.
+Confirm quote appears in the global Quotes panel.
+Select the linked customer.
+Confirm quote appears under Customer Quotes.
+Filter quotes by status.
+Search quotes by customer/name/title/quote number.
+Sort quotes by date, status, customer/name, and amount.
+Update quote status to Sent.
+Update quote status to Accepted, Rejected, or Expired.
+Confirm quote status changes are audit logged.
+Confirm `GET /quotes` returns `HTTP/1.1 200 OK`.
+Confirm customer-specific quote history returns the customer’s quotes.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -844,6 +956,47 @@ Query Global Audit by Entity Type
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/audit?entityType=Customer"
 ```
+Create Quote
+Replace `<CUSTOMER_ID>` with an actual customer ID.
+```bash
+curl -i -X POST http://localhost:8080/quotes \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"customerId":"<CUSTOMER_ID>","title":"Test Quote","description":"Initial quote record","amount":1000.00,"status":"Draft"}'
+```
+List Quotes
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/quotes?status=All&sortBy=date&sortDirection=desc"
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+```
+Filter Quotes by Status
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/quotes?status=Draft&sortBy=date&sortDirection=desc"
+```
+Search Quotes
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/quotes?q=test&status=All&sortBy=date&sortDirection=desc"
+```
+Get Customer Quotes
+Replace `<CUSTOMER_ID>` with an actual customer ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/customers/<CUSTOMER_ID>/quotes
+```
+Update Quote Status
+Replace `<QUOTE_ID>` with an actual quote ID.
+```bash
+curl -i -X POST http://localhost:8080/quotes/<QUOTE_ID>/status \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"status":"Sent"}'
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -961,12 +1114,11 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 11a
-Quotes with DOCX/PDF import/export and physical hard-copy printing
-Link quotes to customers, contracts, and scope of work
-Mark quotes as `accepted`, `rejected`, or `expired`
-Automatically treat unmarked quotes as expired after 30 days
-Sort quotes by status, name, and date
+Phase 11a+
+Quote DOCX/PDF import/export
+Quote physical hard-copy printing workflow
+Quote document template mapping
+Quote attachment/document storage strategy
 Phase 11b
 Contracts with DOCX/PDF import/export and physical hard-copy printing
 Link contracts to customers, quotes, and scope of work
@@ -986,7 +1138,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 10 complete — Security-sensitive audit entries, enhanced global audit filtering, and Admin/Owner audit review workflow are working.
+Phase 11a complete — Database-backed quote records, quote creation, quote filtering/sorting, customer quote history, quote status workflow, quote auditing, and automatic sent-quote expiration are working.
 ```
 ---
 👤 Author
