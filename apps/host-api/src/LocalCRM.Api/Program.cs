@@ -497,7 +497,24 @@ app.MapGet("/customer-edit-requests", async (
         .Take(100)
         .ToListAsync();
 
-    return Results.Ok(requests);
+    var customerIds = requests
+        .Select(r => r.CustomerId)
+        .Distinct()
+        .ToList();
+
+    var customers = await db.Customers
+        .Where(c => customerIds.Contains(c.Id))
+        .ToDictionaryAsync(c => c.Id);
+
+    var response = requests
+        .Select(request =>
+        {
+            customers.TryGetValue(request.CustomerId, out var customer);
+            return ToCustomerEditRequestReviewResponse(request, customer);
+        })
+        .ToList();
+
+    return Results.Ok(response);
 }).RequireAuthorization("AdminOnly");
 
 app.MapPost("/customer-edit-requests/{requestId:guid}/approve", async (
@@ -722,6 +739,48 @@ static async Task<User?> GetCallerUserAsync(HttpContext httpContext, LocalCrmDbC
         u.IsActive);
 }
 
+static CustomerEditRequestReviewResponse ToCustomerEditRequestReviewResponse(CustomerEditRequest request, Customer? customer)
+{
+    return new CustomerEditRequestReviewResponse(
+        request.Id,
+        request.CustomerId,
+        request.RequestedByUserId,
+        request.RequestedByEmail,
+        request.Status,
+        request.RequestedName,
+        request.RequestedType,
+        request.RequestedEmail,
+        request.RequestedPhone,
+        request.RequestedAddressLine1,
+        request.RequestedAddressLine2,
+        request.RequestedCity,
+        request.RequestedState,
+        request.RequestedPostalCode,
+        request.RequestedStatus,
+        request.AdminDecisionByEmail,
+        request.AdminDecisionNote,
+        request.CreatedAtUtc,
+        request.UpdatedAtUtc,
+        request.DecidedAtUtc,
+        customer is null
+            ? null
+            : new CustomerSnapshotResponse(
+                customer.Id,
+                customer.Name,
+                customer.Type,
+                customer.Email,
+                customer.Phone,
+                customer.AddressLine1,
+                customer.AddressLine2,
+                customer.City,
+                customer.State,
+                customer.PostalCode,
+                customer.Status,
+                customer.UpdatedAtUtc
+            )
+    );
+}
+
 static string ValidateRequestedCustomerFields(SubmitCustomerEditRequest input)
 {
     var name = input.Name.Trim();
@@ -886,6 +945,45 @@ public record LoginResponse(
 public record JwtTokenResult(
     string Token,
     DateTime ExpiresAtUtc
+);
+
+public record CustomerEditRequestReviewResponse(
+    Guid Id,
+    Guid CustomerId,
+    string RequestedByUserId,
+    string RequestedByEmail,
+    string Status,
+    string RequestedName,
+    string RequestedType,
+    string RequestedEmail,
+    string RequestedPhone,
+    string RequestedAddressLine1,
+    string RequestedAddressLine2,
+    string RequestedCity,
+    string RequestedState,
+    string RequestedPostalCode,
+    string RequestedStatus,
+    string AdminDecisionByEmail,
+    string AdminDecisionNote,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc,
+    DateTime? DecidedAtUtc,
+    CustomerSnapshotResponse? CurrentCustomer
+);
+
+public record CustomerSnapshotResponse(
+    Guid Id,
+    string Name,
+    string Type,
+    string Email,
+    string Phone,
+    string AddressLine1,
+    string AddressLine2,
+    string City,
+    string State,
+    string PostalCode,
+    string Status,
+    DateTime UpdatedAtUtc
 );
 
 public record PasswordVerificationResultInfo(

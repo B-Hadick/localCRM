@@ -59,6 +59,25 @@ type CustomerEditRequest = {
   decidedAtUtc: string | null;
 };
 
+type CustomerSnapshot = {
+  id: string;
+  name: string;
+  type: string;
+  email: string;
+  phone: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  status: string;
+  updatedAtUtc: string;
+};
+
+type CustomerEditRequestReview = CustomerEditRequest & {
+  currentCustomer: CustomerSnapshot | null;
+};
+
 type CustomerForm = {
   name: string;
   type: string;
@@ -122,7 +141,7 @@ function App() {
   const [notes, setNotes] = useState<CustomerNote[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [customerEditRequests, setCustomerEditRequests] = useState<CustomerEditRequest[]>([]);
-  const [pendingEditRequests, setPendingEditRequests] = useState<CustomerEditRequest[]>([]);
+  const [pendingEditRequests, setPendingEditRequests] = useState<CustomerEditRequestReview[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -136,6 +155,7 @@ function App() {
   const [form, setForm] = useState<CustomerForm>(emptyCustomerForm);
   const [editForm, setEditForm] = useState<CustomerForm>(emptyCustomerForm);
   const [decisionNote, setDecisionNote] = useState("");
+  const [requestStatusFilter, setRequestStatusFilter] = useState("Pending");
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -262,6 +282,36 @@ function App() {
       postalCode: customer.postalCode || "",
       status: customer.status || "Active"
     };
+  }
+
+  function formatBlank(value: string | null | undefined) {
+    const normalized = value?.trim();
+
+    return normalized ? normalized : "—";
+  }
+
+  function valuesAreDifferent(currentValue: string | null | undefined, requestedValue: string | null | undefined) {
+    return formatBlank(currentValue) !== formatBlank(requestedValue);
+  }
+
+  function getRequestComparisonRows(request: CustomerEditRequestReview) {
+    const current = request.currentCustomer;
+
+    return [
+      { label: "Name", currentValue: current?.name, requestedValue: request.requestedName },
+      { label: "Type", currentValue: current?.type, requestedValue: request.requestedType },
+      { label: "Email", currentValue: current?.email, requestedValue: request.requestedEmail },
+      { label: "Phone", currentValue: current?.phone, requestedValue: request.requestedPhone },
+      { label: "Address Line 1", currentValue: current?.addressLine1, requestedValue: request.requestedAddressLine1 },
+      { label: "Address Line 2", currentValue: current?.addressLine2, requestedValue: request.requestedAddressLine2 },
+      { label: "City", currentValue: current?.city, requestedValue: request.requestedCity },
+      { label: "State", currentValue: current?.state, requestedValue: request.requestedState },
+      { label: "Postal Code", currentValue: current?.postalCode, requestedValue: request.requestedPostalCode },
+      { label: "Status", currentValue: current?.status, requestedValue: request.requestedStatus }
+    ].map((row) => ({
+      ...row,
+      changed: valuesAreDifferent(row.currentValue, row.requestedValue)
+    }));
   }
 
   function saveCurrentUser(user: AuthUser) {
@@ -566,7 +616,16 @@ function App() {
     }
 
     try {
-      const response = await fetch("/customer-edit-requests?status=Pending", {
+      const params = new URLSearchParams();
+
+      if (requestStatusFilter !== "All") {
+        params.set("status", requestStatusFilter);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/customer-edit-requests?${queryString}` : "/customer-edit-requests";
+
+      const response = await fetch(url, {
         headers: getAuthHeaders()
       });
 
@@ -578,12 +637,12 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = (await response.json()) as CustomerEditRequest[];
+      const data = (await response.json()) as CustomerEditRequestReview[];
       setPendingEditRequests(data);
     } catch (error) {
       console.error(error);
       setPendingEditRequests([]);
-      setStatus("Failed to load pending edit requests", "error");
+      setStatus("Failed to load edit requests", "error");
     }
   }
 
@@ -599,7 +658,7 @@ function App() {
     } else {
       setPendingEditRequests([]);
     }
-  }, [currentUser?.id, currentUser?.role]);
+  }, [currentUser?.id, currentUser?.role, requestStatusFilter]);
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -1234,8 +1293,24 @@ function App() {
 
           <section className="card">
             <div className="section-header compact-header">
-              <h2>Pending Edit Requests</h2>
+              <h2>Edit Requests</h2>
               <span className="count-chip">{pendingEditRequests.length}</span>
+            </div>
+
+            <div className="toolbar request-toolbar">
+              <select
+                value={requestStatusFilter}
+                onChange={(e) => setRequestStatusFilter(e.target.value)}
+              >
+                <option value="Pending">Pending</option>
+                <option value="Approved">Approved</option>
+                <option value="Rejected">Rejected</option>
+                <option value="All">All Requests</option>
+              </select>
+
+              <button type="button" onClick={loadPendingEditRequests}>
+                Refresh Requests
+              </button>
             </div>
 
             <label className="customer-form">
@@ -1250,33 +1325,64 @@ function App() {
 
             <div className="stack-list compact-list">
               {pendingEditRequests.length === 0 ? (
-                <p className="muted-text">No pending edit requests.</p>
+                <p className="muted-text">No edit requests match the selected filter.</p>
               ) : (
-                pendingEditRequests.map((request) => (
-                  <div key={request.id} className="stack-item">
-                    <div className="stack-item-header">
-                      <strong>{request.requestedName}</strong>
-                      <span>{new Date(request.createdAtUtc).toLocaleString()}</span>
-                    </div>
+                pendingEditRequests.map((request) => {
+                  const comparisonRows = getRequestComparisonRows(request);
+                  const changedCount = comparisonRows.filter((row) => row.changed).length;
 
-                    <div className="compact-content">
-                      Requested by {request.requestedByEmail}
-                    </div>
+                  return (
+                    <div key={request.id} className="stack-item request-review-card">
+                      <div className="stack-item-header">
+                        <strong>{request.requestedName}</strong>
+                        <span className={`status-chip status-chip-${request.status.toLowerCase()}`}>
+                          {request.status}
+                        </span>
+                      </div>
 
-                    <div className="muted-text compact-meta">
-                      {request.requestedType} · {request.requestedEmail || "No email"} · {request.requestedStatus}
-                    </div>
+                      <div className="compact-content">
+                        Requested by {request.requestedByEmail}
+                      </div>
 
-                    <div className="note-actions-row">
-                      <button type="button" onClick={() => handleEditRequestDecision(request.id, "approve")}>
-                        Approve
-                      </button>
-                      <button type="button" onClick={() => handleEditRequestDecision(request.id, "reject")}>
-                        Reject
-                      </button>
+                      <div className="muted-text compact-meta">
+                        {new Date(request.createdAtUtc).toLocaleString()} · {changedCount} field{changedCount === 1 ? "" : "s"} changed
+                      </div>
+
+                      <div className="comparison-grid comparison-header">
+                        <strong>Field</strong>
+                        <strong>Current</strong>
+                        <strong>Requested</strong>
+                      </div>
+
+                      {comparisonRows.map((row) => (
+                        <div
+                          key={`${request.id}-${row.label}`}
+                          className={row.changed ? "comparison-grid changed-field" : "comparison-grid"}
+                        >
+                          <span>{row.label}</span>
+                          <span>{formatBlank(row.currentValue)}</span>
+                          <span>{formatBlank(row.requestedValue)}</span>
+                        </div>
+                      ))}
+
+                      {request.status === "Pending" ? (
+                        <div className="note-actions-row">
+                          <button type="button" onClick={() => handleEditRequestDecision(request.id, "approve")}>
+                            Approve
+                          </button>
+                          <button type="button" onClick={() => handleEditRequestDecision(request.id, "reject")}>
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="muted-text compact-meta">
+                          Decision by {request.adminDecisionByEmail || "—"}
+                          {request.adminDecisionNote ? ` · ${request.adminDecisionNote}` : ""}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>

@@ -13,6 +13,7 @@ Authorization policies
 Backend-backed search/filtering
 Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
+Current-vs-requested approval review data
 Password hashing with ASP.NET Core Identity password hasher
 Structured console logging
 JSON error handling middleware
@@ -25,6 +26,9 @@ Role-aware UI behavior
 JWT-backed authenticated API requests
 Staff edit-request submission workflow
 Admin approval/rejection workflow
+Current-vs-requested edit review UI
+Changed-field highlighting
+Edit request status filtering
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -59,7 +63,10 @@ Backend enforces Admin-only edit-request approval/rejection
 Customer Edit Requests
 Staff can submit proposed customer changes for Admin review
 Proposed changes are stored separately from the live customer record
-Admin can view pending edit requests
+Admin can view pending, approved, rejected, or all edit requests
+Admin can review current customer values beside requested values
+Changed fields are visually highlighted
+Changed-field counts are shown per request
 Admin can approve edit requests
 Admin can reject edit requests
 Approved requests update the live customer record
@@ -107,6 +114,9 @@ Unauthorized/session-expired messaging
 Selected-customer fallback when filtered results change
 Pending edit request count display
 Edit request history display
+Current-vs-requested comparison grid
+Changed-field highlighting
+Edit request status filtering
 Clear validation messages for customer, note, login, Staff user, and edit request forms
 Backend Reliability Features
 Backend health check
@@ -173,6 +183,7 @@ PostgreSQL-backed persistence
 Backend query/filter design
 Customer workflow modeling
 Staff-to-Admin approval workflow design
+Current-vs-requested approval review patterns
 Notes and activity tracking
 Audit logging patterns
 JWT authentication
@@ -378,6 +389,37 @@ Reject it as Admin.
 Confirm the live customer record does not change.
 Confirm audit activity records request, approval, and rejection events.
 ---
+✅ Phase 6 — Completed
+Phase 6 improved the Admin approval workflow with clearer review context and filtering.
+Implemented
+Backend enriched edit-request review response
+Current customer snapshot included with Admin edit-request results
+Frontend current-vs-requested comparison grid
+Field-level changed-value highlighting
+Changed-field count display
+Admin edit request status filter
+Pending, Approved, Rejected, and All Requests views
+Manual request refresh button
+Status chip styling for edit-request states
+Responsive layout for comparison rows
+Verified Flow
+Sign in as Staff.
+Submit a customer edit request with multiple changed fields.
+Sign in as Admin.
+Confirm the request appears in the Admin review panel.
+Confirm current values and requested values appear side-by-side.
+Confirm changed fields are highlighted.
+Confirm changed-field count displays correctly.
+Approve the request.
+Confirm the request moves out of Pending.
+Switch filter to Approved.
+Confirm the approved request appears there.
+Submit another Staff edit request.
+Reject it as Admin.
+Switch filter to Rejected.
+Confirm the rejected request appears there.
+Confirm the live customer record only changes after approval.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -479,6 +521,21 @@ List Pending Edit Requests as Admin
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/customer-edit-requests?status=Pending"
 ```
+List Approved Edit Requests as Admin
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=Approved"
+```
+List Rejected Edit Requests as Admin
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=Rejected"
+```
+List All Edit Requests as Admin
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=All"
+```
 Approve Edit Request as Admin
 Replace `<REQUEST_ID>` with an actual edit request ID.
 ```bash
@@ -545,29 +602,31 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 6
-Improve approval workflow UX
-Show side-by-side “current vs requested” customer values
-Add clearer per-field change highlighting
-Add request filters by status/date/requester
+Phase 7
+Add request filters by date and requester
 Add request counts to customer list or dashboard
+Add dashboard-style workflow summary
+Improve Admin queue navigation
+Consider per-customer pending request indicators
 Later Phases
-Password change/reset workflow
-Owner/SuperAdmin distinction before allowing Admin-user creation
-Security-sensitive audit entries
-Quotes
-Contracts
-Scope-of-work records
-Document templates
-Email workflow
-Calendar/ICS export
-Backup/export tools
-Tenant/custom branding support
+Phase 8: Password change/reset workflow
+Phase 9: Owner/SuperAdmin distinction before allowing Admin-user creation
+Phase 10: Security-sensitive audit entries
+Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing - markable as "accepted", "rejected", "expired" (if unmarked after 30 days)
+Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing - markable as "signed", "completed/billable"
+Phase 12: Scope-of-work records with linking to customer/quote/contract, DOCX/PDF import/export, and physical hard-copy printing
+Phase 13: Document templates for quotes, contracts, scope-of-work
+Phase 14: Email workflow
+Phase 15: Calendar/ICS export
+Phase 16: Requisition creation with conversion to Purchase order, DOCX/PDF import/export and physical hard-copy printing
+Phase 17: Accounts payable (tied to Requisitions and Purchase Orders) and Accounts Receivable/Invoicing (tied to Contracts) logging and filing with "Paid", "Due"/"Unpaid" and tied to Calendar/ICS alerts. 
+Phase 18: Backup/export tools
+Phase 19: Tenant/custom branding support
 ---
 📌 Status
 Current milestone:
 ```text
-Phase 5 complete — Staff-submitted customer edit requests, Admin approval/rejection, live customer update on approval, rejection without mutation, edit request history, and audit events are working.
+Phase 6 complete — Admin edit-request review now shows current-vs-requested customer values, highlights changed fields, supports request status filters, and preserves the approval/rejection workflow.
 ```
 ---
 👤 Author
