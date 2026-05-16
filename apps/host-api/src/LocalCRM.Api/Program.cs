@@ -1,5 +1,10 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.IdentityModel.Tokens;
 using LocalCRM.Api.Data;
 using LocalCRM.Api.Models;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +32,42 @@ builder.Services.AddCors(options =>
 builder.Services.AddDbContext<LocalCrmDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "LocalCRM.Api";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "LocalCRM.Desktop";
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"] ?? throw new InvalidOperationException("JWT signing key is missing.");
+var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtSigningKey);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(jwtKeyBytes),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(2)
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AuthenticatedUser", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+    });
+
+    options.AddPolicy("AdminOnly", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole("Admin");
+    });
+});
+
 var app = builder.Build();
 
 // --- MIDDLEWARE ---
@@ -50,6 +91,8 @@ app.UseExceptionHandler(errorApp =>
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors("DesktopDev");
+app.UseAuthentication();
+app.UseAuthorization();
 
 // --- DB INIT ---
 using (var scope = app.Services.CreateScope())
@@ -78,7 +121,7 @@ app.MapGet("/", () => Results.Ok(new
     message = "LocalCRM Host API running"
 }));
 
-app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ILogger<Program> logger) =>
+app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, IConfiguration config, ILogger<Program> logger) =>
 {
     var email = input.Email.Trim().ToLowerInvariant();
     var password = input.Password;
@@ -114,14 +157,18 @@ app.MapPost("/auth/login", async (LoginRequest input, LocalCrmDbContext db, ILog
         logger.LogInformation("Password hash upgraded for {Email}", user.Email);
     }
 
+    var tokenResult = CreateJwtToken(user, config);
+
     logger.LogInformation("User {Email} logged in with role {Role}", user.Email, user.Role);
 
-    return Results.Ok(new AuthUserResponse(
+    return Results.Ok(new LoginResponse(
         user.Id,
         user.DisplayName,
         user.Email,
         user.Role,
-        user.IsActive
+        user.IsActive,
+        tokenResult.Token,
+        tokenResult.ExpiresAtUtc
     ));
 });
 
@@ -202,7 +249,7 @@ app.MapPost("/users/staff", async (
         user.Role,
         user.IsActive
     ));
-});
+}).RequireAuthorization("AdminOnly");
 
 app.MapGet("/customers", async (LocalCrmDbContext db, ILogger<Program> logger) =>
 {
@@ -213,7 +260,7 @@ app.MapGet("/customers", async (LocalCrmDbContext db, ILogger<Program> logger) =
         .ToListAsync();
 
     return Results.Ok(customers);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapGet("/customers/search", async (
     string? q,
@@ -248,7 +295,7 @@ app.MapGet("/customers/search", async (
         .ToListAsync();
 
     return Results.Ok(customers);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapGet("/customers/{id:guid}", async (Guid id, LocalCrmDbContext db) =>
 {
@@ -257,7 +304,7 @@ app.MapGet("/customers/{id:guid}", async (Guid id, LocalCrmDbContext db) =>
     return customer is null
         ? Results.NotFound(new { error = "Customer not found" })
         : Results.Ok(customer);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapPost("/customers", async (
     Customer input,
@@ -294,7 +341,7 @@ app.MapPost("/customers", async (
     await db.SaveChangesAsync();
 
     return Results.Created($"/customers/{input.Id}", input);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapPut("/customers/{id:guid}", async (
     Guid id,
@@ -351,7 +398,7 @@ app.MapPut("/customers/{id:guid}", async (
     await db.SaveChangesAsync();
 
     return Results.Ok(customer);
-});
+}).RequireAuthorization("AdminOnly");
 
 app.MapGet("/customers/{customerId:guid}/notes", async (Guid customerId, LocalCrmDbContext db) =>
 {
@@ -361,7 +408,7 @@ app.MapGet("/customers/{customerId:guid}/notes", async (Guid customerId, LocalCr
         .ToListAsync();
 
     return Results.Ok(notes);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapPost("/customers/{customerId:guid}/notes", async (
     Guid customerId,
@@ -406,7 +453,7 @@ app.MapPost("/customers/{customerId:guid}/notes", async (
     await db.SaveChangesAsync();
 
     return Results.Created($"/customers/{customerId}/notes/{input.Id}", input);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapGet("/customers/{customerId:guid}/audit", async (Guid customerId, LocalCrmDbContext db) =>
 {
@@ -417,7 +464,7 @@ app.MapGet("/customers/{customerId:guid}/audit", async (Guid customerId, LocalCr
         .ToListAsync();
 
     return Results.Ok(logs);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.MapGet("/audit", async (string? entityType, string? entityId, LocalCrmDbContext db) =>
 {
@@ -439,34 +486,70 @@ app.MapGet("/audit", async (string? entityType, string? entityId, LocalCrmDbCont
         .ToListAsync();
 
     return Results.Ok(logs);
-});
+}).RequireAuthorization("AuthenticatedUser");
 
 app.Run();
 
 static string GetPerformedBy(HttpContext httpContext)
 {
-    var headerValue = httpContext.Request.Headers["X-LocalCRM-User"].FirstOrDefault();
+    var email = httpContext.User.FindFirstValue(ClaimTypes.Email);
 
-    if (string.IsNullOrWhiteSpace(headerValue))
+    if (!string.IsNullOrWhiteSpace(email))
     {
-        return "system";
+        return email;
     }
 
-    return headerValue.Trim();
+    return "system";
 }
 
 static async Task<User?> GetCallerUserAsync(HttpContext httpContext, LocalCrmDbContext db)
 {
-    var performedBy = GetPerformedBy(httpContext).ToLowerInvariant();
+    var email = httpContext.User.FindFirstValue(ClaimTypes.Email);
 
-    if (performedBy == "system")
+    if (string.IsNullOrWhiteSpace(email))
     {
         return null;
     }
 
     return await db.Users.FirstOrDefaultAsync(u =>
-        u.Email.ToLower() == performedBy &&
+        u.Email.ToLower() == email.ToLower() &&
         u.IsActive);
+}
+
+static JwtTokenResult CreateJwtToken(User user, IConfiguration config)
+{
+    var issuer = config["Jwt:Issuer"] ?? "LocalCRM.Api";
+    var audience = config["Jwt:Audience"] ?? "LocalCRM.Desktop";
+    var signingKey = config["Jwt:SigningKey"] ?? throw new InvalidOperationException("JWT signing key is missing.");
+    var expirationMinutes = int.TryParse(config["Jwt:ExpirationMinutes"], out var parsedMinutes)
+        ? parsedMinutes
+        : 120;
+
+    var expiresAtUtc = DateTime.UtcNow.AddMinutes(expirationMinutes);
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
+    var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+    var claims = new List<Claim>
+    {
+        new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+        new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new(ClaimTypes.Name, user.DisplayName),
+        new(ClaimTypes.Email, user.Email),
+        new(ClaimTypes.Role, user.Role)
+    };
+
+    var token = new JwtSecurityToken(
+        issuer: issuer,
+        audience: audience,
+        claims: claims,
+        expires: expiresAtUtc,
+        signingCredentials: credentials
+    );
+
+    return new JwtTokenResult(
+        new JwtSecurityTokenHandler().WriteToken(token),
+        expiresAtUtc
+    );
 }
 
 static PasswordVerificationResultInfo VerifyPassword(User user, string password, PasswordHasher<User> passwordHasher)
@@ -533,6 +616,21 @@ public record AuthUserResponse(
     string Email,
     string Role,
     bool IsActive
+);
+
+public record LoginResponse(
+    Guid Id,
+    string DisplayName,
+    string Email,
+    string Role,
+    bool IsActive,
+    string Token,
+    DateTime ExpiresAtUtc
+);
+
+public record JwtTokenResult(
+    string Token,
+    DateTime ExpiresAtUtc
 );
 
 public record PasswordVerificationResultInfo(

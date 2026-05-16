@@ -2,7 +2,7 @@
 
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
 
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, password hashing, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, UI state handling, and containerized development environments.
 
 ---
 
@@ -13,6 +13,8 @@ This project demonstrates end-to-end system design, including API development, d
 - Entity Framework Core
 - PostgreSQL
 - REST API design
+- JWT bearer authentication
+- Authorization policies
 - Backend-backed search/filtering
 - Role-aware backend workflow enforcement
 - Password hashing with ASP.NET Core Identity password hasher
@@ -25,6 +27,7 @@ This project demonstrates end-to-end system design, including API development, d
 - Vite
 - Electron desktop wrapper
 - Role-aware UI behavior
+- JWT-backed authenticated API requests
 - Local session persistence with browser localStorage
 
 ### Infrastructure
@@ -40,7 +43,10 @@ This project demonstrates end-to-end system design, including API development, d
 ### Authentication & Roles
 - Login/logout flow
 - Admin and Staff user roles
+- JWT token issued on successful login
+- JWT bearer authentication for protected backend routes
 - Persistent signed-in user state across browser refreshes
+- Token expiration tracking on the frontend
 - Admin-only Staff user creation
 - Password hashing for seeded and newly created users
 - Legacy development passwords upgrade to hashed passwords after successful login
@@ -54,6 +60,7 @@ This project demonstrates end-to-end system design, including API development, d
 - Staff users can view customer notes and audit activity
 - Staff users cannot edit customer records
 - Backend enforces Admin-only customer edits
+- Backend enforces Admin-only Staff user creation
 
 ### Customer Management
 - Create customer records
@@ -83,7 +90,7 @@ This project demonstrates end-to-end system design, including API development, d
 - Audit entries for customer creation
 - Audit entries for customer updates
 - Audit entries for note creation
-- User-aware audit activity using the current signed-in user
+- User-aware audit activity from authenticated JWT claims
 - Customer-specific audit activity panel
 - Compact audit display with activity counts
 
@@ -92,6 +99,7 @@ This project demonstrates end-to-end system design, including API development, d
 - Empty-state messaging
 - No-results messaging for search/filter combinations
 - API failure messaging
+- Unauthorized/session-expired messaging
 - Selected-customer fallback when filtered results change
 - Clear validation messages for customer, note, login, and Staff user forms
 
@@ -131,6 +139,30 @@ This project demonstrates end-to-end system design, including API development, d
 
 ---
 
+## 🔐 Authorization Model
+
+### Public Routes
+- `GET /health`
+- `POST /auth/login`
+
+### Authenticated User Routes
+Require a valid JWT bearer token:
+- `GET /customers`
+- `GET /customers/search`
+- `GET /customers/{id}`
+- `POST /customers`
+- `GET /customers/{customerId}/notes`
+- `POST /customers/{customerId}/notes`
+- `GET /customers/{customerId}/audit`
+- `GET /audit`
+
+### Admin-Only Routes
+Require a valid JWT bearer token with the `Admin` role:
+- `PUT /customers/{id}`
+- `POST /users/staff`
+
+---
+
 ## 🧠 What This Project Demonstrates
 
 - Full-stack application architecture
@@ -142,10 +174,12 @@ This project demonstrates end-to-end system design, including API development, d
 - Customer workflow modeling
 - Notes and activity tracking
 - Audit logging patterns
+- JWT authentication
+- Role-based authorization policies
 - Role-aware frontend behavior
 - Backend role enforcement for protected workflows
 - Password hashing and legacy password upgrade flow
-- UI state handling for loading, empty, no-results, and API-failure scenarios
+- UI state handling for loading, empty, no-results, unauthorized, and API-failure scenarios
 - Client-facing form validation
 - Debugging across TypeScript, .NET, Docker, and database layers
 - Real-world development workflow inside a containerized Codespaces environment
@@ -296,23 +330,41 @@ Phase 4A added the authentication and role-aware workflow foundation.
 
 ---
 
-## ⏳ Phase 4B — Not Started
+## ✅ Phase 4B — Completed
 
-Phase 4B is the production-grade authentication and authorization hardening pass.
+Phase 4B hardened the auth layer by replacing temporary frontend-sent identity headers with JWT-based authentication and authorization.
 
-### Planned
-- Replace temporary `X-LocalCRM-User` identity header with real token/session authentication
-- Add authenticated claims
-- Protect API routes using authentication middleware
-- Add authorization policies for Admin and Staff workflows
-- Remove trust in frontend-sent identity headers
-- Add session expiration or token expiration
-- Consider password change/reset workflow
-- Consider Owner/SuperAdmin distinction before allowing Admin-user creation
-- Add audit records for user creation and security-sensitive activity
+### Implemented
+- JWT bearer authentication package
+- JWT issuer, audience, signing key, and expiration settings
+- Signed JWT returned from login
+- Frontend token storage
+- Authenticated frontend API requests using `Authorization: Bearer <token>`
+- Backend authentication middleware
+- Backend authorization middleware
+- Authenticated-user policy
+- Admin-only policy
+- Protected customer routes
+- Protected note routes
+- Protected audit routes
+- Admin-only customer edit route
+- Admin-only Staff user creation route
+- Audit identity derived from JWT claims
+- Removal of frontend `X-LocalCRM-User` identity trust
+- Frontend session clearing on unauthorized/expired-token responses
 
-### Current Limitation
-The current Phase 4A auth layer uses hashed passwords and backend role checks, but the signed-in user identity is still passed from the frontend through a temporary development header. This is suitable for the current development milestone, but it is not production-grade authentication yet.
+### Verified Flow
+1. Unauthenticated customer API calls return `401 Unauthorized`.
+2. Admin login returns a JWT token.
+3. Staff login returns a JWT token.
+4. Authenticated users can load/search customers.
+5. Authenticated users can create customers.
+6. Authenticated users can create notes.
+7. Admin users can edit customer records.
+8. Staff users cannot edit customer records.
+9. Admin users can create Staff users.
+10. Audit activity records the authenticated user from JWT claims.
+11. Frontend clears session on unauthorized or expired access.
 
 ---
 

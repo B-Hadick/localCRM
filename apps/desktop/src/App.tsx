@@ -55,6 +55,8 @@ type AuthUser = {
   email: string;
   role: string;
   isActive: boolean;
+  token: string;
+  expiresAtUtc: string;
 };
 
 type StaffUserForm = {
@@ -123,11 +125,21 @@ function App() {
     setStatusType(type);
   }
 
-  function getUserHeaders() {
+  function getAuthHeaders() {
+    return {
+      Authorization: `Bearer ${currentUser?.token ?? ""}`
+    };
+  }
+
+  function getJsonAuthHeaders() {
     return {
       "Content-Type": "application/json",
-      "X-LocalCRM-User": currentUser?.email ?? "system"
+      Authorization: `Bearer ${currentUser?.token ?? ""}`
     };
+  }
+
+  function isExpired(user: AuthUser) {
+    return new Date(user.expiresAtUtc).getTime() <= Date.now();
   }
 
   function isValidEmail(email: string) {
@@ -234,6 +246,28 @@ function App() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   }
 
+  function clearSession(message = "Session ended. Please sign in again.") {
+    clearCurrentUser();
+    setCurrentUser(null);
+    setCustomers([]);
+    setSelectedCustomer(null);
+    setNotes([]);
+    setAuditLogs([]);
+    setSearchTerm("");
+    setStatusFilter("All");
+    setStaffUserForm(emptyStaffUserForm);
+    setStatus(message, "error");
+  }
+
+  function handleUnauthorizedResponse(response: Response) {
+    if (response.status === 401 || response.status === 403) {
+      clearSession("Session expired or access denied. Please sign in again.");
+      return true;
+    }
+
+    return false;
+  }
+
   useEffect(() => {
     const storedUser = localStorage.getItem(AUTH_STORAGE_KEY);
 
@@ -244,7 +278,15 @@ function App() {
     try {
       const parsedUser = JSON.parse(storedUser) as AuthUser;
 
-      if (parsedUser?.id && parsedUser?.email && parsedUser?.role && parsedUser?.isActive) {
+      if (
+        parsedUser?.id &&
+        parsedUser?.email &&
+        parsedUser?.role &&
+        parsedUser?.isActive &&
+        parsedUser?.token &&
+        parsedUser?.expiresAtUtc &&
+        !isExpired(parsedUser)
+      ) {
         setCurrentUser(parsedUser);
         setStatus(`Signed in as ${parsedUser.displayName}.`, "success");
       } else {
@@ -316,6 +358,11 @@ function App() {
       return;
     }
 
+    if (isExpired(currentUser)) {
+      clearSession("Session expired. Please sign in again.");
+      return;
+    }
+
     setLoading(true);
     setCustomerLoadError("");
     setStatus("Loading customers...", "info");
@@ -334,7 +381,14 @@ function App() {
       const queryString = params.toString();
       const url = queryString ? `/customers/search?${queryString}` : "/customers";
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -389,8 +443,19 @@ function App() {
   }
 
   async function loadCustomerNotes(customerId: string) {
+    if (!currentUser) {
+      return;
+    }
+
     try {
-      const response = await fetch(`/customers/${customerId}/notes`);
+      const response = await fetch(`/customers/${customerId}/notes`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -405,8 +470,19 @@ function App() {
   }
 
   async function loadAuditLogs(customerId: string) {
+    if (!currentUser) {
+      return;
+    }
+
     try {
-      const response = await fetch(`/customers/${customerId}/audit`);
+      const response = await fetch(`/customers/${customerId}/audit`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -455,9 +531,13 @@ function App() {
     try {
       const response = await fetch("/customers", {
         method: "POST",
-        headers: getUserHeaders(),
+        headers: getJsonAuthHeaders(),
         body: JSON.stringify(payload)
       });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -509,9 +589,13 @@ function App() {
     try {
       const response = await fetch(`/customers/${selectedCustomer.id}`, {
         method: "PUT",
-        headers: getUserHeaders(),
+        headers: getJsonAuthHeaders(),
         body: JSON.stringify(payload)
       });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -559,12 +643,16 @@ function App() {
     try {
       const response = await fetch(`/customers/${selectedCustomer.id}/notes`, {
         method: "POST",
-        headers: getUserHeaders(),
+        headers: getJsonAuthHeaders(),
         body: JSON.stringify({
           content,
           isPinned: noteForm.isPinned
         })
       });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -603,13 +691,17 @@ function App() {
     try {
       const response = await fetch("/users/staff", {
         method: "POST",
-        headers: getUserHeaders(),
+        headers: getJsonAuthHeaders(),
         body: JSON.stringify({
           displayName: staffUserForm.displayName.trim(),
           email: staffUserForm.email.trim(),
           password: staffUserForm.password
         })
       });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -621,7 +713,7 @@ function App() {
       setStatus(`Staff user "${createdUser.displayName}" created successfully.`, "success");
     } catch (error) {
       console.error(error);
-      setStatus("Failed to create staff user. Backend route may not be wired yet.", "error");
+      setStatus("Failed to create staff user. Check permissions and try again.", "error");
     }
   }
 
