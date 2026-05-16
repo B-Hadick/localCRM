@@ -10,36 +10,32 @@ public static class DbSeeder
     {
         var passwordHasher = new PasswordHasher<User>();
 
-        if (!await db.Users.AnyAsync())
-        {
-            var adminUser = new User
-            {
-                Id = Guid.NewGuid(),
-                DisplayName = "Admin User",
-                Email = "admin@localcrm.dev",
-                Role = "Admin",
-                IsActive = true,
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
+        await EnsureUserAsync(
+            db,
+            passwordHasher,
+            displayName: "Owner User",
+            email: "owner@localcrm.dev",
+            role: "Owner",
+            password: "Owner123!"
+        );
 
-            adminUser.PasswordHash = passwordHasher.HashPassword(adminUser, "Admin123!");
+        await EnsureUserAsync(
+            db,
+            passwordHasher,
+            displayName: "Admin User",
+            email: "admin@localcrm.dev",
+            role: "Admin",
+            password: "Admin123!"
+        );
 
-            var staffUser = new User
-            {
-                Id = Guid.NewGuid(),
-                DisplayName = "Staff User",
-                Email = "staff@localcrm.dev",
-                Role = "Staff",
-                IsActive = true,
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
-            };
-
-            staffUser.PasswordHash = passwordHasher.HashPassword(staffUser, "Staff123!");
-
-            db.Users.AddRange(adminUser, staffUser);
-        }
+        await EnsureUserAsync(
+            db,
+            passwordHasher,
+            displayName: "Staff User",
+            email: "staff@localcrm.dev",
+            role: "Staff",
+            password: "Staff123!"
+        );
 
         if (!await db.Customers.AnyAsync())
         {
@@ -80,5 +76,64 @@ public static class DbSeeder
         }
 
         await db.SaveChangesAsync();
+    }
+
+    private static async Task EnsureUserAsync(
+        LocalCrmDbContext db,
+        PasswordHasher<User> passwordHasher,
+        string displayName,
+        string email,
+        string role,
+        string password)
+    {
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+
+        var existingUser = await db.Users.FirstOrDefaultAsync(u =>
+            u.Email.ToLower() == normalizedEmail);
+
+        if (existingUser is not null)
+        {
+            var changed = false;
+
+            if (existingUser.DisplayName != displayName)
+            {
+                existingUser.DisplayName = displayName;
+                changed = true;
+            }
+
+            if (existingUser.Role != role)
+            {
+                existingUser.Role = role;
+                changed = true;
+            }
+
+            if (!existingUser.IsActive)
+            {
+                existingUser.IsActive = true;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                existingUser.UpdatedAtUtc = DateTime.UtcNow;
+            }
+
+            return;
+        }
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = displayName,
+            Email = normalizedEmail,
+            Role = role,
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        user.PasswordHash = passwordHasher.HashPassword(user, password);
+
+        db.Users.Add(user);
     }
 }

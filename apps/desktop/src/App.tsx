@@ -120,6 +120,12 @@ type StaffUserForm = {
   password: string;
 };
 
+type AdminUserForm = {
+  displayName: string;
+  email: string;
+  password: string;
+};
+
 type UserAccount = {
   id: string;
   displayName: string;
@@ -161,6 +167,12 @@ const emptyStaffUserForm: StaffUserForm = {
   password: ""
 };
 
+const emptyAdminUserForm: AdminUserForm = {
+  displayName: "",
+  email: "",
+  password: ""
+};
+
 const emptyChangePasswordForm: ChangePasswordForm = {
   currentPassword: "",
   newPassword: "",
@@ -191,8 +203,8 @@ const AUTH_STORAGE_KEY = "localcrm.currentUser";
 function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [loginForm, setLoginForm] = useState({
-    email: "admin@localcrm.dev",
-    password: "Admin123!"
+    email: "owner@localcrm.dev",
+    password: "Owner123!"
   });
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -229,10 +241,13 @@ function App() {
   });
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
+  const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
   const [changePasswordForm, setChangePasswordForm] = useState<ChangePasswordForm>(emptyChangePasswordForm);
   const [resetPasswordForm, setResetPasswordForm] = useState<ResetPasswordForm>(emptyResetPasswordForm);
 
+  const isOwner = currentUser?.role === "Owner";
   const isAdmin = currentUser?.role === "Admin";
+  const isAdminOrOwner = isAdmin || isOwner;
 
   const pendingRequestCustomerIdSet = useMemo(
     () => new Set(pendingRequestCustomerIds),
@@ -340,6 +355,30 @@ function App() {
     }
 
     return "";
+  }
+
+  function validateAdminUserForm(input: AdminUserForm) {
+    const displayName = input.displayName.trim();
+    const email = input.email.trim();
+    const password = input.password;
+
+    if (!displayName) {
+      return "Admin display name is required.";
+    }
+
+    if (displayName.length < 2) {
+      return "Admin display name must be at least 2 characters.";
+    }
+
+    if (!email) {
+      return "Admin email is required.";
+    }
+
+    if (!isValidEmail(email)) {
+      return "Enter a valid Admin email address.";
+    }
+
+    return validatePasswordValue(password);
   }
 
   function validatePasswordValue(password: string) {
@@ -474,6 +513,7 @@ function App() {
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
+    setAdminUserForm(emptyAdminUserForm);
     setStatus(message, "error");
   }
 
@@ -575,6 +615,7 @@ function App() {
     setSearchTerm("");
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
+    setAdminUserForm(emptyAdminUserForm);
     setStatus("Signed out.", "info");
   }
 
@@ -670,7 +711,7 @@ function App() {
   }
 
   async function loadDashboardSummary() {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setDashboardSummary(emptyDashboardSummary);
       return;
     }
@@ -698,7 +739,7 @@ function App() {
   }
 
   async function loadUsers() {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setUsers([]);
       return;
     }
@@ -800,7 +841,7 @@ function App() {
       const data = (await response.json()) as CustomerEditRequest[];
       setCustomerEditRequests(data);
 
-      if (isAdmin) {
+      if (isAdminOrOwner) {
         await loadRequestQueue();
         await loadPendingCustomerIds();
       }
@@ -812,7 +853,7 @@ function App() {
   }
 
   async function loadRequestQueue() {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setRequestQueue([]);
       return;
     }
@@ -861,7 +902,7 @@ function App() {
   }
 
   async function loadPendingCustomerIds() {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setPendingRequestCustomerIds([]);
       return;
     }
@@ -890,7 +931,7 @@ function App() {
   }
 
   async function refreshAdminWorkflow() {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       return;
     }
 
@@ -909,7 +950,7 @@ function App() {
   }, [currentUser, searchTerm, statusFilter]);
 
   useEffect(() => {
-    if (currentUser && isAdmin) {
+    if (currentUser && isAdminOrOwner) {
       refreshAdminWorkflow();
     } else {
       setRequestQueue([]);
@@ -968,7 +1009,7 @@ function App() {
       setStatus(`Customer "${createdCustomer.name}" created successfully.`, "success");
       await loadCustomers();
 
-      if (isAdmin) {
+      if (isAdminOrOwner) {
         await refreshAdminWorkflow();
       }
     } catch (error) {
@@ -985,7 +1026,7 @@ function App() {
       return;
     }
 
-    if (!isAdmin) {
+    if (!isAdminOrOwner) {
       setStatus("Only Admin users can edit customer records.", "error");
       return;
     }
@@ -1085,7 +1126,7 @@ function App() {
   }
 
   async function handleEditRequestDecision(requestId: string, decision: "approve" | "reject") {
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin users can approve or reject edit requests.", "error");
       return;
     }
@@ -1184,10 +1225,65 @@ function App() {
     }
   }
 
+  async function handleAdminUserSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser || !isOwner) {
+      setStatus("Only Owner users can create Admin users.", "error");
+      return;
+    }
+
+    const validationError = validateAdminUserForm(adminUserForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Creating admin user...", "info");
+
+    try {
+      const response = await fetch("/users/admin", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          displayName: adminUserForm.displayName.trim(),
+          email: adminUserForm.email.trim(),
+          password: adminUserForm.password
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const createdUser = (await response.json()) as AuthUser;
+
+      setAdminUserForm(emptyAdminUserForm);
+      setStatus(`Admin user "${createdUser.displayName}" created successfully.`, "success");
+      await loadUsers();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to create admin user.", "error");
+    }
+  }
+
   async function handleStaffUserSubmit(event: FormEvent) {
     event.preventDefault();
 
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin users can create Staff users.", "error");
       return;
     }
@@ -1284,7 +1380,7 @@ function App() {
   async function handleResetPasswordSubmit(event: FormEvent) {
     event.preventDefault();
 
-    if (!currentUser || !isAdmin) {
+    if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin users can reset Staff passwords.", "error");
       return;
     }
@@ -1389,7 +1485,7 @@ function App() {
                   type="email"
                   value={loginForm.email}
                   onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
-                  placeholder="admin@localcrm.dev"
+                  placeholder="owner@localcrm.dev"
                 />
               </label>
 
@@ -1409,7 +1505,7 @@ function App() {
             </form>
 
             <div className="auth-hint">
-              Dev users: admin@localcrm.dev / Admin123! or staff@localcrm.dev / Staff123!
+              Dev users: owner@localcrm.dev / Owner123!, admin@localcrm.dev / Admin123!, or staff@localcrm.dev / Staff123!
             </div>
           </section>
         </main>
@@ -1483,11 +1579,11 @@ function App() {
           </form>
         </section>
 
-        {isAdmin && (
+        {isAdminOrOwner && (
           <section className="card">
             <div className="section-header compact-header">
               <h2>Reset Staff Password</h2>
-              <span className="status-chip status-chip-active">Admin Only</span>
+              <span className="status-chip status-chip-active">Admin / Owner</span>
             </div>
 
             <form className="customer-form" onSubmit={handleResetPasswordSubmit}>
@@ -1534,7 +1630,7 @@ function App() {
         )}
       </section>
 
-      {isAdmin && (
+      {isAdminOrOwner && (
         <section className="dashboard-grid">
           <section className="dashboard-card">
             <span>Total Customers</span>
@@ -1766,12 +1862,56 @@ function App() {
         </section>
       </main>
 
-      {isAdmin && (
+      {isAdminOrOwner && (
         <section className="layout-grid">
+          {isOwner && (
+            <section className="card">
+              <div className="section-header compact-header">
+                <h2>Create Admin User</h2>
+                <span className="status-chip status-chip-active">Owner Only</span>
+              </div>
+
+              <form className="customer-form" onSubmit={handleAdminUserSubmit}>
+                <div className="form-grid">
+                  <label>
+                    Display Name
+                    <input
+                      value={adminUserForm.displayName}
+                      onChange={(e) => setAdminUserForm({ ...adminUserForm, displayName: e.target.value })}
+                      placeholder="Admin user name"
+                    />
+                  </label>
+
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={adminUserForm.email}
+                      onChange={(e) => setAdminUserForm({ ...adminUserForm, email: e.target.value })}
+                      placeholder="admin@example.com"
+                    />
+                  </label>
+
+                  <label>
+                    Temporary Password
+                    <input
+                      type="password"
+                      value={adminUserForm.password}
+                      onChange={(e) => setAdminUserForm({ ...adminUserForm, password: e.target.value })}
+                      placeholder="At least 8 characters, uppercase, lowercase, number"
+                    />
+                  </label>
+                </div>
+
+                <button type="submit">Create Admin User</button>
+              </form>
+            </section>
+          )}
+
           <section className="card">
             <div className="section-header compact-header">
               <h2>Create Staff User</h2>
-              <span className="status-chip status-chip-active">Admin Only</span>
+              <span className="status-chip status-chip-active">Admin / Owner</span>
             </div>
 
             <form className="customer-form" onSubmit={handleStaffUserSubmit}>
@@ -1968,7 +2108,7 @@ function App() {
               </div>
             </div>
 
-            <form className="customer-form" onSubmit={isAdmin ? handleCustomerUpdate : handleEditRequestSubmit}>
+            <form className="customer-form" onSubmit={isAdminOrOwner ? handleCustomerUpdate : handleEditRequestSubmit}>
               <div className="form-grid">
                 <label>
                   Name
@@ -2061,11 +2201,11 @@ function App() {
               </div>
 
               <button type="submit">
-                {isAdmin ? "Save Customer" : "Submit Edit Request"}
+                {isAdminOrOwner ? "Save Customer" : "Submit Edit Request"}
               </button>
             </form>
 
-            {!isAdmin && (
+            {!isAdminOrOwner && (
               <div className="inline-state">
                 Staff edits are submitted for Admin approval before changing the customer record.
               </div>

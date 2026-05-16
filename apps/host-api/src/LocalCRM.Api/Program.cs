@@ -61,10 +61,16 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
 
-    options.AddPolicy("AdminOnly", policy =>
+    options.AddPolicy("AdminOrOwner", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireRole("Admin");
+        policy.RequireRole("Admin", "Owner");
+    });
+
+    options.AddPolicy("OwnerOnly", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole("Owner");
     });
 });
 
@@ -245,7 +251,7 @@ app.MapPost("/users/staff", async (
     var performedBy = GetPerformedBy(httpContext);
     var caller = await GetCallerUserAsync(httpContext, db);
 
-    if (caller is null || caller.Role != "Admin")
+    if (caller is null || !IsAdminOrOwner(caller))
     {
         logger.LogWarning("Unauthorized staff user creation attempt by {PerformedBy}", performedBy);
         return Results.Forbid();
@@ -302,6 +308,17 @@ app.MapPost("/users/staff", async (
 
     db.Users.Add(user);
 
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "User",
+        EntityId = user.Id.ToString(),
+        Action = "StaffCreated",
+        Details = $"Staff user '{user.Email}' created.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
     logger.LogInformation("Staff user {Email} created by {PerformedBy}", user.Email, performedBy);
 
     await db.SaveChangesAsync();
@@ -313,7 +330,99 @@ app.MapPost("/users/staff", async (
         user.Role,
         user.IsActive
     ));
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
+
+
+app.MapPost("/users/admin", async (
+    CreateAdminUserRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var caller = await GetCallerUserAsync(httpContext, db);
+
+    if (caller is null || !IsOwner(caller))
+    {
+        logger.LogWarning("Unauthorized admin user creation attempt by {PerformedBy}", performedBy);
+        return Results.Forbid();
+    }
+
+    var displayName = input.DisplayName.Trim();
+    var email = input.Email.Trim().ToLowerInvariant();
+    var password = input.Password;
+
+    if (string.IsNullOrWhiteSpace(displayName))
+    {
+        return Results.BadRequest(new { error = "Display name is required" });
+    }
+
+    if (displayName.Length < 2)
+    {
+        return Results.BadRequest(new { error = "Display name must be at least 2 characters" });
+    }
+
+    if (string.IsNullOrWhiteSpace(email))
+    {
+        return Results.BadRequest(new { error = "Email is required" });
+    }
+
+    if (!IsValidEmail(email))
+    {
+        return Results.BadRequest(new { error = "A valid email address is required" });
+    }
+
+    var passwordValidationError = ValidatePassword(password);
+    if (!string.IsNullOrWhiteSpace(passwordValidationError))
+    {
+        return Results.BadRequest(new { error = passwordValidationError });
+    }
+
+    var emailExists = await db.Users.AnyAsync(u => u.Email.ToLower() == email);
+    if (emailExists)
+    {
+        return Results.Conflict(new { error = "A user with this email already exists" });
+    }
+
+    var user = new User
+    {
+        Id = Guid.NewGuid(),
+        DisplayName = displayName,
+        Email = email,
+        Role = "Admin",
+        IsActive = true,
+        CreatedAtUtc = DateTime.UtcNow,
+        UpdatedAtUtc = DateTime.UtcNow
+    };
+
+    var passwordHasher = new PasswordHasher<User>();
+    user.PasswordHash = passwordHasher.HashPassword(user, password);
+
+    db.Users.Add(user);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "User",
+        EntityId = user.Id.ToString(),
+        Action = "AdminCreated",
+        Details = $"Admin user '{user.Email}' created.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Admin user {Email} created by {PerformedBy}", user.Email, performedBy);
+
+    return Results.Created($"/users/{user.Id}", new AuthUserResponse(
+        user.Id,
+        user.DisplayName,
+        user.Email,
+        user.Role,
+        user.IsActive
+    ));
+}).RequireAuthorization("OwnerOnly");
 
 app.MapGet("/users", async (LocalCrmDbContext db) =>
 {
@@ -332,7 +441,7 @@ app.MapGet("/users", async (LocalCrmDbContext db) =>
         .ToListAsync();
 
     return Results.Ok(users);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapPost("/users/{userId:guid}/reset-password", async (
     Guid userId,
@@ -344,7 +453,7 @@ app.MapPost("/users/{userId:guid}/reset-password", async (
     var performedBy = GetPerformedBy(httpContext);
     var caller = await GetCallerUserAsync(httpContext, db);
 
-    if (caller is null || caller.Role != "Admin")
+    if (caller is null || !IsAdminOrOwner(caller))
     {
         logger.LogWarning("Unauthorized password reset attempt by {PerformedBy}", performedBy);
         return Results.Forbid();
@@ -392,7 +501,7 @@ app.MapPost("/users/{userId:guid}/reset-password", async (
     logger.LogInformation("Password reset for {TargetEmail} by {PerformedBy}", targetUser.Email, performedBy);
 
     return Results.Ok(new { message = "Staff password reset successfully" });
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapGet("/customers", async (LocalCrmDbContext db, ILogger<Program> logger) =>
 {
@@ -496,7 +605,7 @@ app.MapPut("/customers/{id:guid}", async (
     var performedBy = GetPerformedBy(httpContext);
     var caller = await GetCallerUserAsync(httpContext, db);
 
-    if (caller is null || caller.Role != "Admin")
+    if (caller is null || !IsAdminOrOwner(caller))
     {
         logger.LogWarning("Unauthorized customer update attempt by {PerformedBy}", performedBy);
         return Results.Forbid();
@@ -541,7 +650,7 @@ app.MapPut("/customers/{id:guid}", async (
     await db.SaveChangesAsync();
 
     return Results.Ok(customer);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapPost("/customers/{customerId:guid}/edit-requests", async (
     Guid customerId,
@@ -657,7 +766,7 @@ app.MapGet("/dashboard/summary", async (LocalCrmDbContext db) =>
         pendingEditRequestsToday,
         recentAuditEvents
     ));
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapGet("/customer-edit-requests", async (
     string? status,
@@ -714,7 +823,7 @@ app.MapGet("/customer-edit-requests", async (
         .ToList();
 
     return Results.Ok(response);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapPost("/customer-edit-requests/{requestId:guid}/approve", async (
     Guid requestId,
@@ -776,7 +885,7 @@ app.MapPost("/customer-edit-requests/{requestId:guid}/approve", async (
     await db.SaveChangesAsync();
 
     return Results.Ok(request);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapPost("/customer-edit-requests/{requestId:guid}/reject", async (
     Guid requestId,
@@ -820,7 +929,7 @@ app.MapPost("/customer-edit-requests/{requestId:guid}/reject", async (
     await db.SaveChangesAsync();
 
     return Results.Ok(request);
-}).RequireAuthorization("AdminOnly");
+}).RequireAuthorization("AdminOrOwner");
 
 app.MapGet("/customers/{customerId:guid}/notes", async (Guid customerId, LocalCrmDbContext db) =>
 {
@@ -936,6 +1045,16 @@ static async Task<User?> GetCallerUserAsync(HttpContext httpContext, LocalCrmDbC
     return await db.Users.FirstOrDefaultAsync(u =>
         u.Email.ToLower() == email.ToLower() &&
         u.IsActive);
+}
+
+static bool IsAdminOrOwner(User user)
+{
+    return user.Role == "Admin" || user.Role == "Owner";
+}
+
+static bool IsOwner(User user)
+{
+    return user.Role == "Owner";
 }
 
 static CustomerEditRequestReviewResponse ToCustomerEditRequestReviewResponse(CustomerEditRequest request, Customer? customer)
@@ -1112,6 +1231,11 @@ static PasswordVerificationResultInfo VerifyPassword(User user, string password,
 
 static bool IsLegacyDevelopmentPasswordMatch(User user, string password)
 {
+    if (user.Email.Equals("owner@localcrm.dev", StringComparison.OrdinalIgnoreCase) && password == "Owner123!")
+    {
+        return true;
+    }
+
     if (user.Email.Equals("admin@localcrm.dev", StringComparison.OrdinalIgnoreCase) && password == "Admin123!")
     {
         return true;
@@ -1133,6 +1257,12 @@ static bool IsValidEmail(string email)
 public record LoginRequest(string Email, string Password);
 
 public record CreateStaffUserRequest(
+    string DisplayName,
+    string Email,
+    string Password
+);
+
+public record CreateAdminUserRequest(
     string DisplayName,
     string Email,
     string Password

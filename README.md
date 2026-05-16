@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -10,6 +10,7 @@ PostgreSQL
 REST API design
 JWT bearer authentication
 Authorization policies
+Owner/Admin/Staff role enforcement
 Backend-backed search/filtering
 Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
@@ -18,8 +19,9 @@ Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
 Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
-Admin Staff password reset workflow
-Security-sensitive audit events for password changes/resets
+Admin/Owner Staff password reset workflow
+Owner-only Admin user creation workflow
+Security-sensitive audit events for password changes/resets/user creation
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -29,15 +31,17 @@ Vite
 Electron desktop wrapper
 Role-aware UI behavior
 JWT-backed authenticated API requests
+Owner/Admin/Staff role-aware controls
 Staff edit-request submission workflow
-Admin approval/rejection workflow
+Admin/Owner approval/rejection workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
 Edit request status/requester/date filtering
-Admin dashboard summary cards
+Admin/Owner dashboard summary cards
 Per-customer pending request indicators
 Account security panel
-Admin Staff password reset panel
+Admin/Owner Staff password reset panel
+Owner-only Admin creation panel
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -48,13 +52,14 @@ GitHub Codespaces-ready development environment
 📦 Current Features
 Authentication & Roles
 Login/logout flow
-Admin and Staff user roles
+Owner, Admin, and Staff user roles
 JWT token issued on successful login
 JWT bearer authentication for protected backend routes
 Persistent signed-in user state across browser refreshes
 Token expiration tracking on the frontend
-Admin-only Staff user creation
-Admin-only Staff password reset
+Owner-only Admin user creation
+Admin/Owner Staff user creation
+Admin/Owner Staff password reset
 Authenticated user password change
 Password hashing for seeded and newly created users
 Legacy development passwords upgrade to hashed passwords after successful login
@@ -62,8 +67,10 @@ Password validation on backend and frontend
 Password Management
 Signed-in users can change their own password
 Current password is required before changing password
-Admin users can reset active Staff user passwords
-Admin users cannot reset Admin passwords through the Staff reset workflow
+Owner and Admin users can reset active Staff user passwords
+Admin users cannot reset Admin or Owner passwords through the Staff reset workflow
+Owner can create Admin users
+Admin cannot create Admin users
 Password requirements:
 Minimum 8 characters
 At least one uppercase letter
@@ -71,23 +78,31 @@ At least one lowercase letter
 At least one number
 Password changes are audit logged
 Password resets are audit logged
+Admin user creation is audit logged
+Staff user creation is audit logged
 Password update operations preserve ASP.NET Core Identity password hashing
 Role-Aware Workflow
+Owner users can create Admin users
+Owner users can create Staff users
+Owner users can reset Staff passwords
+Owner users can create, edit, and review customer workflows
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
 Admin users can reset Staff passwords
+Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
 Staff users can view customer notes and audit activity
 Staff users cannot directly edit customer records
 Staff users can submit customer edit requests
-Admin users can approve or reject Staff-submitted edit requests
-Backend enforces Admin-only customer edits
-Backend enforces Admin-only Staff user creation
-Backend enforces Admin-only Staff password reset
-Backend enforces Admin-only edit-request approval/rejection
-Admin Dashboard
+Owner/Admin users can approve or reject Staff-submitted edit requests
+Backend enforces Owner-only Admin creation
+Backend enforces Admin/Owner Staff user creation
+Backend enforces Admin/Owner customer edits
+Backend enforces Admin/Owner Staff password reset
+Backend enforces Admin/Owner edit-request approval/rejection
+Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
 Active customer count
@@ -97,16 +112,16 @@ Pending requests created today
 Edit requests from the last 7 days
 Summary refresh after approval/rejection workflow actions
 Customer Edit Requests
-Staff can submit proposed customer changes for Admin review
+Staff can submit proposed customer changes for Admin/Owner review
 Proposed changes are stored separately from the live customer record
-Admin can view pending, approved, rejected, or all edit requests
-Admin can filter edit requests by requester
-Admin can filter edit requests by date range
-Admin can review current customer values beside requested values
+Admin/Owner can view pending, approved, rejected, or all edit requests
+Admin/Owner can filter edit requests by requester
+Admin/Owner can filter edit requests by date range
+Admin/Owner can review current customer values beside requested values
 Changed fields are visually highlighted
 Changed-field counts are shown per request
-Admin can approve edit requests
-Admin can reject edit requests
+Admin/Owner can approve edit requests
+Admin/Owner can reject edit requests
 Approved requests update the live customer record
 Rejected requests leave the live customer record unchanged
 Customer detail view shows edit request history
@@ -117,7 +132,7 @@ Create customer records
 Retrieve customer records
 Select customer from list
 View customer details
-Edit customer profile fields as Admin
+Edit customer profile fields as Admin/Owner
 Submit customer profile edits as Staff for approval
 Store customer contact and address details
 Persist customer changes in PostgreSQL
@@ -143,6 +158,8 @@ Audit entries for edit request approval
 Audit entries for edit request rejection
 Audit entries for password changes
 Audit entries for Staff password resets
+Audit entries for Staff user creation
+Audit entries for Admin user creation
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Compact audit display with activity counts
@@ -161,7 +178,8 @@ Changed-field highlighting
 Edit request status/requester/date filtering
 Account security form state
 Staff password reset form state
-Clear validation messages for customer, note, login, Staff user, password, and edit request forms
+Owner-only Admin creation form state
+Clear validation messages for customer, note, login, Staff user, Admin user, password, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -179,6 +197,7 @@ Dashboard
 Users
 `GET /users`
 `POST /users/staff`
+`POST /users/admin`
 `POST /users/{userId}/reset-password`
 Customers
 `GET /customers`
@@ -216,8 +235,8 @@ Require a valid JWT bearer token:
 `POST /customers/{customerId}/notes`
 `GET /customers/{customerId}/audit`
 `GET /audit`
-Admin-Only Routes
-Require a valid JWT bearer token with the `Admin` role:
+Admin / Owner Routes
+Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `GET /dashboard/summary`
 `GET /users`
 `PUT /customers/{id}`
@@ -226,6 +245,9 @@ Require a valid JWT bearer token with the `Admin` role:
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
+Owner-Only Routes
+Require a valid JWT bearer token with the `Owner` role:
+`POST /users/admin`
 ---
 🧠 What This Project Demonstrates
 Full-stack application architecture
@@ -240,6 +262,8 @@ Current-vs-requested approval review patterns
 Dashboard summary/reporting endpoint design
 Queue filtering and operational workflow visibility
 Password management workflow design
+Owner/Admin/Staff authorization hierarchy
+Protected role elevation workflow
 Security-sensitive audit logging
 Notes and activity tracking
 Audit logging patterns
@@ -540,6 +564,42 @@ Sign out.
 Confirm Staff can sign in with the changed password.
 Confirm password audit events are created.
 ---
+✅ Phase 9 — Completed
+Phase 9 added Owner/SuperAdmin role hardening and protected role elevation.
+Implemented
+Seeded Owner user
+Owner login support
+Backend `AdminOrOwner` authorization policy
+Backend `OwnerOnly` authorization policy
+Owner-only Admin creation endpoint
+Frontend Owner role recognition
+Frontend Admin/Owner shared workflow visibility
+Frontend Owner-only Admin creation panel
+Admin user creation audit event
+Staff user creation audit event
+Admin users blocked from Admin creation
+Owner users allowed to create Admin users
+Owner/Admin users allowed to create Staff users
+Owner/Admin users allowed to reset Staff passwords
+Owner/Admin users allowed to edit customers
+Owner/Admin users allowed to approve/reject edit requests
+Staff remains blocked from management/admin workflows
+No additional Vite proxy route required because `/users/admin` is covered by `/users`
+Verified Flow
+Sign in as Owner.
+Confirm Owner sees dashboard, request queue, Staff reset, Staff creation, and Admin creation.
+Create a test Admin user as Owner.
+Sign out.
+Sign in as the newly created Admin user.
+Confirm the new Admin can create Staff users.
+Confirm the new Admin can reset Staff passwords.
+Confirm the new Admin cannot create Admin users.
+Sign in as Owner again.
+Confirm Owner can still create Admin users.
+Sign in as Staff.
+Confirm Staff cannot see dashboard/user-management/admin tools.
+Confirm Staff can still create customers and submit edit requests.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -571,6 +631,10 @@ Open the forwarded `5173` port in the browser.
 🔐 Development Login Users
 Seeded users:
 ```text
+Owner:
+owner@localcrm.dev
+Owner123!
+
 Admin:
 admin@localcrm.dev
 Admin123!
@@ -585,6 +649,13 @@ After successful login, legacy development passwords are upgraded to hashed pass
 Health Check
 ```bash
 curl http://localhost:8080/health
+```
+Login as Owner and Store Token
+```bash
+OWNER_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"owner@localcrm.dev","password":"Owner123!"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ```
 Login as Admin and Store Token
 ```bash
@@ -621,15 +692,43 @@ Search Customers
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/customers/search?q=acme&status=All"
 ```
+Get Dashboard Summary as Owner
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/dashboard/summary
+```
 Get Dashboard Summary as Admin
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   http://localhost:8080/dashboard/summary
 ```
+List Users as Owner
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/users
+```
 List Users as Admin
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   http://localhost:8080/users
+```
+Create Admin User as Owner
+```bash
+curl -i -X POST http://localhost:8080/users/admin \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"displayName":"Test Admin","email":"test.admin@localcrm.dev","password":"Admin1234!"}'
+```
+Confirm Admin Cannot Create Admin User
+```bash
+curl -i -X POST http://localhost:8080/users/admin \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"displayName":"Blocked Admin","email":"blocked.admin@localcrm.dev","password":"Admin1234!"}'
+```
+Expected:
+```text
+HTTP/1.1 403 Forbidden
 ```
 Change Own Password
 ```bash
@@ -637,6 +736,14 @@ curl -i -X POST http://localhost:8080/auth/change-password \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $STAFF_TOKEN" \
   -d '{"currentPassword":"Staff123!","newPassword":"NewStaff123!"}'
+```
+Reset Staff Password as Owner
+Replace `<USER_ID>` with an actual Staff user ID from `GET /users`.
+```bash
+curl -i -X POST http://localhost:8080/users/<USER_ID>/reset-password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"newPassword":"ResetStaff123!"}'
 ```
 Reset Staff Password as Admin
 Replace `<USER_ID>` with an actual Staff user ID from `GET /users`.
@@ -653,6 +760,13 @@ curl -i -X POST http://localhost:8080/users/staff \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"displayName":"Test Staff","email":"test.staff@localcrm.dev","password":"Staff1234!"}'
 ```
+Create Staff User as Owner
+```bash
+curl -i -X POST http://localhost:8080/users/staff \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"displayName":"Owner Created Staff","email":"owner.created.staff@localcrm.dev","password":"Staff1234!"}'
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -660,6 +774,11 @@ curl -i -X POST http://localhost:8080/customers/<CUSTOMER_ID>/edit-requests \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $STAFF_TOKEN" \
   -d '{"name":"Requested Customer Name","type":"Company","email":"requested@example.com","phone":"555-0100","addressLine1":"","addressLine2":"","city":"Oklahoma City","state":"OK","postalCode":"73101","status":"Active"}'
+```
+List Pending Edit Requests as Owner
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/customer-edit-requests?status=Pending"
 ```
 List Pending Edit Requests as Admin
 ```bash
@@ -690,6 +809,14 @@ Filter Edit Requests by Date Range
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/customer-edit-requests?status=All&from=2026-01-01&to=2026-12-31"
+```
+Approve Edit Request as Owner
+Replace `<REQUEST_ID>` with an actual edit request ID.
+```bash
+curl -i -X POST http://localhost:8080/customer-edit-requests/<REQUEST_ID>/approve \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"note":"Approved by Owner"}'
 ```
 Approve Edit Request as Admin
 Replace `<REQUEST_ID>` with an actual edit request ID.
@@ -757,29 +884,28 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 9
-Owner/SuperAdmin distinction before allowing Admin-user creation
-Owner-only Admin creation
-Admin user management hardening
-Protected role elevation workflows
-Later Phases:
+Phase 10
+Security-sensitive audit entries
+Enhanced user-management audit visibility
+Audit filters by actor, action, entity, and date
+Admin/Owner audit review workflow
+Later Phases
 Phase 10: Security-sensitive audit entries
-Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing - markable as `accepted`, `rejected`, `expired` if unmarked after 30 days
-Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing - markable as `signed`, `completed/billable`
+Phase 11a: Quotes with DOCX/PDF import/export and physical hard-copy printing; linking to customers and contracts and scope of work, and markable as `accepted`, `rejected`, `expired` if unmarked after 30 days with sorting by status, name, date
+Phase 11b: Contracts with DOCX/PDF import/export and physical hard-copy printing; linking to customers and quotes and scope of work - markable as `signed`, `completed/billable` with sorting by name, status, date
 Phase 12: Scope-of-work records with linking to customer/quote/contract, DOCX/PDF import/export, and physical hard-copy printing
 Phase 13: Document templates for quotes, contracts, scope-of-work
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
-Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing
-Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with `Paid`, `Due`, and `Unpaid` states tied to Calendar/ICS alerts
-Phase 18: Backup/export tools
+Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requesition creator, requisition number, purchase order number, date, vendor name
+Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts Accounts Payable sorting and searching by vendor name, requesition creator, requisition number, purchase order number, date; Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phgone number, invoice number, invoice status, contract number, datePhase 18: Backup/export tools
 Phase 19: Tenant/custom branding support
-Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post login splash page displays section tabs (buttons), pending requests and audit log
+Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post-login splash page displays section tabs/buttons, pending requests, and audit log
 ---
 📌 Status
 Current milestone:
 ```text
-Phase 8 complete — Authenticated password change, Admin Staff password reset, password validation, password hashing, and password audit events are working.
+Phase 9 complete — Owner/SuperAdmin role hardening, Owner-only Admin creation, Admin/Owner shared operational permissions, and protected role elevation workflow are working.
 ```
 ---
 👤 Author
