@@ -232,6 +232,54 @@ type ContractFilters = {
   to: string;
 };
 
+type ScopeOfWork = {
+  id: string;
+  customerId: string;
+  customerName: string;
+  quoteId: string | null;
+  quoteNumber: string;
+  contractId: string | null;
+  contractNumber: string;
+  scopeNumber: string;
+  title: string;
+  description: string;
+  deliverables: string;
+  assumptions: string;
+  exclusions: string;
+  estimatedAmount: number;
+  status: string;
+  scopeDateUtc: string;
+  reviewedAtUtc: string | null;
+  approvedAtUtc: string | null;
+  activatedAtUtc: string | null;
+  completedAtUtc: string | null;
+  cancelledAtUtc: string | null;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+};
+
+type ScopeOfWorkForm = {
+  customerId: string;
+  quoteId: string;
+  contractId: string;
+  title: string;
+  description: string;
+  deliverables: string;
+  assumptions: string;
+  exclusions: string;
+  estimatedAmount: string;
+  status: string;
+};
+
+type ScopeOfWorkFilters = {
+  q: string;
+  status: string;
+  sortBy: string;
+  sortDirection: string;
+  from: string;
+  to: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -314,6 +362,28 @@ const emptyContractFilters: ContractFilters = {
   to: ""
 };
 
+const emptyScopeOfWorkForm: ScopeOfWorkForm = {
+  customerId: "",
+  quoteId: "",
+  contractId: "",
+  title: "",
+  description: "",
+  deliverables: "",
+  assumptions: "",
+  exclusions: "",
+  estimatedAmount: "",
+  status: "Draft"
+};
+
+const emptyScopeOfWorkFilters: ScopeOfWorkFilters = {
+  q: "",
+  status: "All",
+  sortBy: "date",
+  sortDirection: "desc",
+  from: "",
+  to: ""
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -351,6 +421,8 @@ function App() {
   const [customerQuotes, setCustomerQuotes] = useState<Quote[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [customerContracts, setCustomerContracts] = useState<Contract[]>([]);
+  const [scopesOfWork, setScopesOfWork] = useState<ScopeOfWork[]>([]);
+  const [customerScopesOfWork, setCustomerScopesOfWork] = useState<ScopeOfWork[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -371,6 +443,7 @@ function App() {
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
   const [quoteFilters, setQuoteFilters] = useState<QuoteFilters>(emptyQuoteFilters);
   const [contractFilters, setContractFilters] = useState<ContractFilters>(emptyContractFilters);
+  const [scopeOfWorkFilters, setScopeOfWorkFilters] = useState<ScopeOfWorkFilters>(emptyScopeOfWorkFilters);
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -379,6 +452,7 @@ function App() {
 
   const [quoteForm, setQuoteForm] = useState<QuoteForm>(emptyQuoteForm);
   const [contractForm, setContractForm] = useState<ContractForm>(emptyContractForm);
+  const [scopeOfWorkForm, setScopeOfWorkForm] = useState<ScopeOfWorkForm>(emptyScopeOfWorkForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -583,6 +657,36 @@ function App() {
     return "";
   }
 
+  function validateScopeOfWorkForm(input: ScopeOfWorkForm) {
+    if (!input.customerId) {
+      return "Select a customer before creating a scope of work.";
+    }
+
+    if (!input.title.trim()) {
+      return "Scope of work title is required.";
+    }
+
+    if (input.title.trim().length < 2) {
+      return "Scope of work title must be at least 2 characters.";
+    }
+
+    const estimatedAmount = Number(input.estimatedAmount);
+
+    if (Number.isNaN(estimatedAmount)) {
+      return "Estimated amount must be a valid number.";
+    }
+
+    if (estimatedAmount < 0) {
+      return "Estimated amount cannot be negative.";
+    }
+
+    if (!["Draft", "In Review", "Approved", "Active", "Completed", "Cancelled"].includes(input.status)) {
+      return "Scope of work status must be Draft, In Review, Approved, Active, Completed, or Cancelled.";
+    }
+
+    return "";
+  }
+
   function validateContractForm(input: ContractForm) {
     if (!input.customerId) {
       return "Select a customer before creating a contract.";
@@ -679,6 +783,13 @@ function App() {
     return new Date(value).toLocaleDateString();
   }
 
+  function getStatusClassName(status: string) {
+    return status
+      .toLowerCase()
+      .replace("/", "-")
+      .replace(/\s+/g, "-");
+  }
+
   function valuesAreDifferent(currentValue: string | null | undefined, requestedValue: string | null | undefined) {
     return formatBlank(currentValue) !== formatBlank(requestedValue);
   }
@@ -723,6 +834,8 @@ function App() {
     setCustomerQuotes([]);
     setContracts([]);
     setCustomerContracts([]);
+    setScopesOfWork([]);
+    setCustomerScopesOfWork([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -831,6 +944,8 @@ function App() {
     setCustomerQuotes([]);
     setContracts([]);
     setCustomerContracts([]);
+    setScopesOfWork([]);
+    setCustomerScopesOfWork([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -1219,6 +1334,91 @@ function App() {
     }
   }
 
+  async function loadScopesOfWork() {
+    if (!currentUser) {
+      setScopesOfWork([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (scopeOfWorkFilters.q.trim()) {
+        params.set("q", scopeOfWorkFilters.q.trim());
+      }
+
+      if (scopeOfWorkFilters.status !== "All") {
+        params.set("status", scopeOfWorkFilters.status);
+      }
+
+      if (scopeOfWorkFilters.sortBy) {
+        params.set("sortBy", scopeOfWorkFilters.sortBy);
+      }
+
+      if (scopeOfWorkFilters.sortDirection) {
+        params.set("sortDirection", scopeOfWorkFilters.sortDirection);
+      }
+
+      if (scopeOfWorkFilters.from) {
+        params.set("from", scopeOfWorkFilters.from);
+      }
+
+      if (scopeOfWorkFilters.to) {
+        params.set("to", scopeOfWorkFilters.to);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/scopes-of-work?${queryString}` : "/scopes-of-work";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as ScopeOfWork[];
+      setScopesOfWork(data);
+    } catch (error) {
+      console.error(error);
+      setScopesOfWork([]);
+      setStatus("Failed to load scopes of work", "error");
+    }
+  }
+
+  async function loadCustomerScopesOfWork(customerId: string) {
+    if (!currentUser) {
+      setCustomerScopesOfWork([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/customers/${customerId}/scopes-of-work`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as ScopeOfWork[];
+      setCustomerScopesOfWork(data);
+    } catch (error) {
+      console.error(error);
+      setCustomerScopesOfWork([]);
+      setStatus("Failed to load customer scopes of work", "error");
+    }
+  }
+
   async function loadCustomerNotes(customerId: string) {
     if (!currentUser) {
       return;
@@ -1402,6 +1602,7 @@ function App() {
       loadCustomers();
       loadQuotes();
       loadContracts();
+      loadScopesOfWork();
     }
   }, [
     currentUser,
@@ -1418,7 +1619,13 @@ function App() {
     contractFilters.sortBy,
     contractFilters.sortDirection,
     contractFilters.from,
-    contractFilters.to
+    contractFilters.to,
+    scopeOfWorkFilters.q,
+    scopeOfWorkFilters.status,
+    scopeOfWorkFilters.sortBy,
+    scopeOfWorkFilters.sortDirection,
+    scopeOfWorkFilters.from,
+    scopeOfWorkFilters.to
   ]);
 
   useEffect(() => {
@@ -1453,11 +1660,16 @@ function App() {
       loadCustomerEditRequests(selectedCustomer.id);
       loadCustomerQuotes(selectedCustomer.id);
       loadCustomerContracts(selectedCustomer.id);
+      loadCustomerScopesOfWork(selectedCustomer.id);
       setQuoteForm((current) => ({
         ...current,
         customerId: selectedCustomer.id
       }));
       setContractForm((current) => ({
+        ...current,
+        customerId: selectedCustomer.id
+      }));
+      setScopeOfWorkForm((current) => ({
         ...current,
         customerId: selectedCustomer.id
       }));
@@ -2030,6 +2242,167 @@ function App() {
     }
   }
 
+  async function handleScopeOfWorkSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before creating scopes of work.", "error");
+      return;
+    }
+
+    const validationError = validateScopeOfWorkForm(scopeOfWorkForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Creating scope of work...", "info");
+
+    try {
+      const response = await fetch("/scopes-of-work", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          customerId: scopeOfWorkForm.customerId,
+          quoteId: scopeOfWorkForm.quoteId || null,
+          contractId: scopeOfWorkForm.contractId || null,
+          title: scopeOfWorkForm.title.trim(),
+          description: scopeOfWorkForm.description.trim(),
+          deliverables: scopeOfWorkForm.deliverables.trim(),
+          assumptions: scopeOfWorkForm.assumptions.trim(),
+          exclusions: scopeOfWorkForm.exclusions.trim(),
+          estimatedAmount: Number(scopeOfWorkForm.estimatedAmount),
+          status: scopeOfWorkForm.status
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const createdScope = (await response.json()) as ScopeOfWork;
+
+      setScopeOfWorkForm({
+        ...emptyScopeOfWorkForm,
+        customerId: selectedCustomer?.id ?? ""
+      });
+      setStatus(`Scope of work "${createdScope.scopeNumber}" created successfully.`, "success");
+      await loadScopesOfWork();
+      await loadContracts();
+
+      if (selectedCustomer) {
+        await loadCustomerScopesOfWork(selectedCustomer.id);
+        await loadCustomerContracts(selectedCustomer.id);
+        await loadAuditLogs(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to create scope of work.", "error");
+    }
+  }
+
+  async function openScopeOfWorkDocument(scopeId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before viewing scope-of-work documents.", "error");
+      return;
+    }
+
+    setStatus("Opening printable scope-of-work document...", "info");
+
+    try {
+      const response = await fetch(`/scopes-of-work/${scopeId}/document`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const html = await response.text();
+      const blob = new Blob([html], { type: "text/html" });
+      const documentUrl = URL.createObjectURL(blob);
+
+      window.open(documentUrl, "_blank", "noopener,noreferrer");
+      setStatus("Printable scope-of-work document opened.", "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to open scope-of-work document.", "error");
+    }
+  }
+
+  async function handleScopeOfWorkStatusUpdate(scopeId: string, status: string) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can update scope-of-work status.", "error");
+      return;
+    }
+
+    setStatus("Updating scope-of-work status...", "info");
+
+    try {
+      const response = await fetch(`/scopes-of-work/${scopeId}/status`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({ status })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setStatus(`Scope of work marked ${status}.`, "success");
+      await loadScopesOfWork();
+
+      if (selectedCustomer) {
+        await loadCustomerScopesOfWork(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to update scope-of-work status.", "error");
+    }
+  }
+
   async function handleAdminUserSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -2259,6 +2632,10 @@ function App() {
     setContractFilters(emptyContractFilters);
   }
 
+  function clearScopeOfWorkFilters() {
+    setScopeOfWorkFilters(emptyScopeOfWorkFilters);
+  }
+
   const staffUsers = users.filter((user) => user.role === "Staff" && user.isActive);
 
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
@@ -2291,6 +2668,14 @@ function App() {
     contractFilters.sortDirection !== "desc" ||
     contractFilters.from ||
     contractFilters.to;
+
+  const hasScopeOfWorkFilters =
+    scopeOfWorkFilters.q.trim() ||
+    scopeOfWorkFilters.status !== "All" ||
+    scopeOfWorkFilters.sortBy !== "date" ||
+    scopeOfWorkFilters.sortDirection !== "desc" ||
+    scopeOfWorkFilters.from ||
+    scopeOfWorkFilters.to;
 
   const sortedNotes = [...notes].sort((a, b) => {
     if (a.isPinned !== b.isPinned) {
@@ -3136,6 +3521,300 @@ function App() {
         </section>
       </section>
 
+      <section className="layout-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Scopes of Work</h2>
+            <span className="count-chip">{scopesOfWork.length}</span>
+          </div>
+
+          <div className="quote-filter-grid">
+            <label>
+              Search
+              <input
+                value={scopeOfWorkFilters.q}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, q: e.target.value })}
+                placeholder="SOW number, customer, title..."
+              />
+            </label>
+
+            <label>
+              Status
+              <select
+                value={scopeOfWorkFilters.status}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, status: e.target.value })}
+              >
+                <option value="All">All Statuses</option>
+                <option value="Draft">Draft</option>
+                <option value="In Review">In Review</option>
+                <option value="Approved">Approved</option>
+                <option value="Active">Active</option>
+                <option value="Completed">Completed</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+            </label>
+
+            <label>
+              Sort By
+              <select
+                value={scopeOfWorkFilters.sortBy}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, sortBy: e.target.value })}
+              >
+                <option value="date">Date</option>
+                <option value="status">Status</option>
+                <option value="name">Customer/Name</option>
+                <option value="amount">Amount</option>
+              </select>
+            </label>
+
+            <label>
+              Direction
+              <select
+                value={scopeOfWorkFilters.sortDirection}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, sortDirection: e.target.value })}
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
+
+            <label>
+              From
+              <input
+                type="date"
+                value={scopeOfWorkFilters.from}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, from: e.target.value })}
+              />
+            </label>
+
+            <label>
+              To
+              <input
+                type="date"
+                value={scopeOfWorkFilters.to}
+                onChange={(e) => setScopeOfWorkFilters({ ...scopeOfWorkFilters, to: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="note-actions-row">
+            <button type="button" onClick={loadScopesOfWork}>
+              Refresh SOW
+            </button>
+
+            <button type="button" onClick={clearScopeOfWorkFilters} disabled={!hasScopeOfWorkFilters}>
+              Clear SOW Filters
+            </button>
+          </div>
+
+          <div className="stack-list compact-list quote-list">
+            {scopesOfWork.length === 0 ? (
+              <p className="muted-text">No scopes of work match the selected filters.</p>
+            ) : (
+              scopesOfWork.map((scope) => (
+                <div key={scope.id} className="stack-item quote-item">
+                  <div className="stack-item-header">
+                    <strong>{scope.scopeNumber}</strong>
+                    <span className={`status-chip status-chip-${getStatusClassName(scope.status)}`}>
+                      {scope.status}
+                    </span>
+                  </div>
+
+                  <div className="compact-content">
+                    {scope.title} · {scope.customerName}
+                  </div>
+
+                  <div className="muted-text compact-meta">
+                    {formatCurrency(scope.estimatedAmount)} · SOW date {formatDate(scope.scopeDateUtc)}
+                    {scope.quoteNumber ? ` · Quote ${scope.quoteNumber}` : ""}
+                    {scope.contractNumber ? ` · Contract ${scope.contractNumber}` : ""}
+                    {scope.completedAtUtc ? ` · Completed ${formatDate(scope.completedAtUtc)}` : ""}
+                  </div>
+
+                  <div className="quote-status-row">
+                    <button type="button" onClick={() => openScopeOfWorkDocument(scope.id)}>
+                      View / Print
+                    </button>
+
+                    {isAdminOrOwner && (
+                      <>
+                        <button type="button" onClick={() => handleScopeOfWorkStatusUpdate(scope.id, "In Review")}>
+                          Review
+                        </button>
+                        <button type="button" onClick={() => handleScopeOfWorkStatusUpdate(scope.id, "Approved")}>
+                          Approve
+                        </button>
+                        <button type="button" onClick={() => handleScopeOfWorkStatusUpdate(scope.id, "Active")}>
+                          Active
+                        </button>
+                        <button type="button" onClick={() => handleScopeOfWorkStatusUpdate(scope.id, "Completed")}>
+                          Complete
+                        </button>
+                        <button type="button" onClick={() => handleScopeOfWorkStatusUpdate(scope.id, "Cancelled")}>
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Create Scope of Work</h2>
+            <span className="status-chip status-chip-active">Phase 12</span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleScopeOfWorkSubmit}>
+            <div className="form-grid">
+              <label>
+                Customer
+                <select
+                  value={scopeOfWorkForm.customerId}
+                  onChange={(e) =>
+                    setScopeOfWorkForm({
+                      ...scopeOfWorkForm,
+                      customerId: e.target.value,
+                      quoteId: "",
+                      contractId: ""
+                    })
+                  }
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Linked Quote
+                <select
+                  value={scopeOfWorkForm.quoteId}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, quoteId: e.target.value })}
+                >
+                  <option value="">No linked quote</option>
+                  {quotes
+                    .filter((quote) => !scopeOfWorkForm.customerId || quote.customerId === scopeOfWorkForm.customerId)
+                    .map((quote) => (
+                      <option key={quote.id} value={quote.id}>
+                        {quote.quoteNumber} — {quote.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label>
+                Linked Contract
+                <select
+                  value={scopeOfWorkForm.contractId}
+                  onChange={(e) => {
+                    const selectedContract = contracts.find((contract) => contract.id === e.target.value);
+                    setScopeOfWorkForm({
+                      ...scopeOfWorkForm,
+                      contractId: e.target.value,
+                      quoteId: selectedContract?.quoteId ?? scopeOfWorkForm.quoteId
+                    });
+                  }}
+                >
+                  <option value="">No linked contract</option>
+                  {contracts
+                    .filter((contract) => !scopeOfWorkForm.customerId || contract.customerId === scopeOfWorkForm.customerId)
+                    .map((contract) => (
+                      <option key={contract.id} value={contract.id}>
+                        {contract.contractNumber} — {contract.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label>
+                Title
+                <input
+                  value={scopeOfWorkForm.title}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, title: e.target.value })}
+                  placeholder="Scope of work title"
+                />
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  value={scopeOfWorkForm.description}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, description: e.target.value })}
+                  placeholder="Scope overview..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Deliverables
+                <textarea
+                  value={scopeOfWorkForm.deliverables}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, deliverables: e.target.value })}
+                  placeholder="Deliverables, outputs, milestones..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Assumptions
+                <textarea
+                  value={scopeOfWorkForm.assumptions}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, assumptions: e.target.value })}
+                  placeholder="Assumptions..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Exclusions
+                <textarea
+                  value={scopeOfWorkForm.exclusions}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, exclusions: e.target.value })}
+                  placeholder="Exclusions..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Estimated Amount
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={scopeOfWorkForm.estimatedAmount}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, estimatedAmount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </label>
+
+              <label>
+                Initial Status
+                <select
+                  value={scopeOfWorkForm.status}
+                  onChange={(e) => setScopeOfWorkForm({ ...scopeOfWorkForm, status: e.target.value })}
+                >
+                  <option value="Draft">Draft</option>
+                  <option value="In Review">In Review</option>
+                  <option value="Approved">Approved</option>
+                  <option value="Active">Active</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </label>
+            </div>
+
+            <button type="submit">Create Scope of Work</button>
+          </form>
+        </section>
+      </section>
+
       {isAdminOrOwner && (
         <section className="layout-grid">
           {isOwner && (
@@ -3549,6 +4228,45 @@ function App() {
 
                     <div className="quote-status-row">
                       <button type="button" onClick={() => openContractDocument(contract.id)}>
+                        View / Print
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="stack-list compact-list">
+              <div className="section-header compact-header">
+                <h3>Customer Scopes of Work</h3>
+                <span className="count-chip">{customerScopesOfWork.length}</span>
+              </div>
+
+              {customerScopesOfWork.length === 0 ? (
+                <p className="muted-text">No scopes of work for this customer yet.</p>
+              ) : (
+                customerScopesOfWork.map((scope) => (
+                  <div key={scope.id} className="stack-item quote-item">
+                    <div className="stack-item-header">
+                      <strong>{scope.scopeNumber}</strong>
+                      <span className={`status-chip status-chip-${getStatusClassName(scope.status)}`}>
+                        {scope.status}
+                      </span>
+                    </div>
+
+                    <div className="compact-content">
+                      {scope.title} · {formatCurrency(scope.estimatedAmount)}
+                    </div>
+
+                    <div className="muted-text compact-meta">
+                      SOW date {formatDate(scope.scopeDateUtc)}
+                      {scope.quoteNumber ? ` · Quote ${scope.quoteNumber}` : ""}
+                      {scope.contractNumber ? ` · Contract ${scope.contractNumber}` : ""}
+                      {scope.completedAtUtc ? ` · Completed ${formatDate(scope.completedAtUtc)}` : ""}
+                    </div>
+
+                    <div className="quote-status-row">
+                      <button type="button" onClick={() => openScopeOfWorkDocument(scope.id)}>
                         View / Print
                       </button>
                     </div>

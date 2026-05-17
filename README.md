@@ -1,7 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, quote/contract document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
----
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -19,9 +18,12 @@ Quote status workflow
 Contract record workflow
 Contract status workflow
 Optional quote-to-contract linking
-Future scope-of-work linking field
+Scope-of-work record workflow
+Scope-of-work status workflow
+Quote/contract/scope-of-work linking
 Printable quote document workflow
 Printable contract document workflow
+Printable scope-of-work document workflow
 Browser-printable HTML document generation
 Current-vs-requested approval review data
 Dashboard summary endpoint
@@ -31,7 +33,7 @@ Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
 Admin/Owner Staff password reset workflow
 Owner-only Admin user creation workflow
-Security-sensitive audit events for login, password changes/resets, user creation, quote activity, quote document generation, contract activity, and contract document generation
+Security-sensitive audit events for login, password changes/resets, user creation, quote activity, quote document generation, contract activity, contract document generation, scope-of-work activity, and scope-of-work document generation
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -54,6 +56,11 @@ Contract list/search/filter/sort workflow
 Contract status controls
 Customer-specific contract history
 Contract View / Print workflow
+Scope-of-work creation workflow
+Scope-of-work list/search/filter/sort workflow
+Scope-of-work status controls
+Customer-specific scope-of-work history
+Scope-of-work View / Print workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -70,7 +77,6 @@ Docker
 PostgreSQL container
 Dev Containers
 GitHub Codespaces-ready development environment
----
 📦 Current Features
 Authentication & Roles
 Login/logout flow
@@ -114,6 +120,8 @@ Owner users can create quotes and manage quote statuses
 Owner users can view and print quote documents
 Owner users can create contracts and manage contract statuses
 Owner users can view and print contract documents
+Owner users can create scopes of work and manage scope-of-work statuses
+Owner users can view and print scope-of-work documents
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -123,6 +131,8 @@ Admin users can create quotes and manage quote statuses
 Admin users can view and print quote documents
 Admin users can create contracts and manage contract statuses
 Admin users can view and print contract documents
+Admin users can create scopes of work and manage scope-of-work statuses
+Admin users can view and print scope-of-work documents
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -133,9 +143,12 @@ Staff users can view and print quote documents
 Staff users can create contracts
 Staff users can view contract records
 Staff users can view and print contract documents
+Staff users can create scopes of work
+Staff users can view scope-of-work records
+Staff users can view and print scope-of-work documents
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
-Staff users cannot manage quote or contract status transitions
+Staff users cannot manage quote, contract, or scope-of-work status transitions
 Staff users can submit customer edit requests
 Owner/Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Owner-only Admin creation
@@ -146,6 +159,7 @@ Backend enforces Admin/Owner edit-request approval/rejection
 Backend enforces Admin/Owner-only global audit review
 Backend enforces Admin/Owner-only quote status updates
 Backend enforces Admin/Owner-only contract status updates
+Backend enforces Admin/Owner-only scope-of-work status updates
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -232,7 +246,7 @@ Server-side DOCX/PDF generation and document template mapping remain planned for
 Contract Management
 Create contract records linked to customers
 Optionally link contracts to quote records
-Include a future `ScopeOfWorkId` field for Phase 12 integration
+Link contracts to scope-of-work records through `ScopeOfWorkId`
 Store contract number, title, description, amount, status, and dates
 Automatically generate contract numbers
 View global contract list
@@ -269,7 +283,7 @@ Customer email
 Customer phone
 Customer address
 Linked quote number/status when available
-Future scope-of-work ID when available
+Linked scope-of-work ID when available
 Contract title
 Contract description
 Contract amount
@@ -281,6 +295,62 @@ Browser print dialog supports local “Save as PDF”
 Contract document generation is audit logged
 Printable contract document output uses safe HTML encoding for customer, quote, and contract fields
 Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
+Scope of Work Management
+Create scope-of-work records linked to customers
+Optionally link scope-of-work records to quote records
+Optionally link scope-of-work records to contract records
+Backfill a linked contract’s `ScopeOfWorkId` when creating a linked scope of work
+Store scope number, title, description, deliverables, assumptions, exclusions, estimated amount, status, and dates
+Automatically generate scope-of-work numbers
+View global scope-of-work list
+View customer-specific scope-of-work history under Customer Detail
+Search scopes of work by customer name, scope number, title, description, deliverables, quote number, and contract number
+Filter scopes of work by status
+Filter scopes of work by scope-of-work date range
+Sort scopes of work by:
+Date
+Status
+Customer/name
+Amount
+Supported scope-of-work statuses:
+Draft
+In Review
+Approved
+Active
+Completed
+Cancelled
+Admin/Owner users can update scope-of-work statuses
+Scope-of-work creation is audit logged
+Scope-of-work status changes are audit logged
+Scope of Work Documents
+Generate printable scope-of-work documents from database-backed scope-of-work records
+View/print scope-of-work documents from the global Scopes of Work panel
+View/print scope-of-work documents from the Customer Scopes of Work section
+Printable scope-of-work document includes:
+Scope number
+Scope status
+Scope date
+Generated date
+Customer name
+Customer type
+Customer email
+Customer phone
+Customer address
+Linked quote number/status when available
+Linked contract number/status when available
+Scope title
+Scope description
+Deliverables
+Assumptions
+Exclusions
+Estimated amount
+In-review/approved/active/completed/cancelled dates when available
+Built-in `Print / Save as PDF` button inside the scope-of-work document
+Browser print supports physical hard-copy printing
+Browser print dialog supports local “Save as PDF”
+Scope-of-work document generation is audit logged
+Printable scope-of-work document output uses safe HTML encoding for customer, quote, contract, and scope-of-work fields
+Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -289,6 +359,7 @@ Combine text search with status filtering
 Customer result count display
 Backend-backed quote search/filter/sort
 Backend-backed contract search/filter/sort
+Backend-backed scope-of-work search/filter/sort
 Backend-backed audit search/filter
 Backend-backed edit request filtering
 Customer Notes
@@ -318,6 +389,9 @@ Audit entries for printable quote document generation
 Audit entries for contract creation
 Audit entries for contract status changes
 Audit entries for printable contract document generation
+Audit entries for scope-of-work creation
+Audit entries for scope-of-work status changes
+Audit entries for printable scope-of-work document generation
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -352,17 +426,21 @@ Contract filter/sort state
 Contract status action state
 Contract document opening state
 Customer contract history state
+Scope-of-work form state
+Scope-of-work filter/sort state
+Scope-of-work status action state
+Scope-of-work document opening state
+Customer scope-of-work history state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
 Global audit review filter state
-Clear validation messages for customer, quote, contract, note, login, Staff user, Admin user, password, audit, and edit request forms
+Clear validation messages for customer, quote, contract, scope-of-work, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
 Structured console logging
 JSON error response middleware
----
 📡 Current API Surface
 Health
 `GET /health`
@@ -394,6 +472,12 @@ Contracts
 `POST /contracts`
 `GET /contracts/{contractId}/document`
 `POST /contracts/{contractId}/status`
+Scopes of Work
+`GET /scopes-of-work?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&contractId=&from=&to=`
+`GET /customers/{customerId}/scopes-of-work`
+`POST /scopes-of-work`
+`GET /scopes-of-work/{scopeId}/document`
+`POST /scopes-of-work/{scopeId}/status`
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
@@ -406,7 +490,6 @@ Notes
 Audit
 `GET /customers/{customerId}/audit`
 `GET /audit?entityType=&entityId=&action=&performedBy=&from=&to=`
----
 🔐 Authorization Model
 Public Routes
 `GET /health`
@@ -426,6 +509,10 @@ Require a valid JWT bearer token:
 `GET /customers/{customerId}/contracts`
 `POST /contracts`
 `GET /contracts/{contractId}/document`
+`GET /scopes-of-work?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&contractId=&from=&to=`
+`GET /customers/{customerId}/scopes-of-work`
+`POST /scopes-of-work`
+`GET /scopes-of-work/{scopeId}/document`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -440,6 +527,7 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `POST /users/{userId}/reset-password`
 `POST /quotes/{quoteId}/status`
 `POST /contracts/{contractId}/status`
+`POST /scopes-of-work/{scopeId}/status`
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
@@ -447,7 +535,6 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 Owner-Only Routes
 Require a valid JWT bearer token with the `Owner` role:
 `POST /users/admin`
----
 🧠 What This Project Demonstrates
 Full-stack application architecture
 API ↔ database ↔ frontend integration
@@ -460,8 +547,10 @@ Quote workflow modeling
 Quote status lifecycle handling
 Contract workflow modeling
 Contract status lifecycle handling
+Scope-of-work workflow modeling
+Scope-of-work status lifecycle handling
 Optional quote-to-contract linking
-Future scope-of-work linking design
+Quote/contract/scope-of-work linking design
 Automatic expiration logic
 Printable document generation from database records
 Browser-based hard-copy printing workflow
@@ -487,7 +576,6 @@ UI state handling for loading, empty, no-results, unauthorized, pending-approval
 Client-facing form validation
 Debugging across TypeScript, .NET, Docker, and database layers
 Real-world development workflow inside a containerized Codespaces environment
----
 ✅ Phase 1 — Completed
 Phase 1 established the core full-stack CRM foundation.
 Implemented
@@ -508,7 +596,6 @@ Start the React/Vite frontend.
 Load customer records from PostgreSQL.
 Create a new customer from the UI.
 Confirm the new customer persists after refresh.
----
 ✅ Phase 2 — Completed
 Phase 2 added deeper customer-level workflow behavior.
 Implemented
@@ -531,7 +618,6 @@ Add a note to the selected customer.
 Mark a note as pinned.
 View customer-specific audit activity.
 Confirm customer updates and notes persist after refresh.
----
 ✅ Phase 3 — Completed
 Phase 3 improved customer list usability, backend search behavior, frontend state handling, form validation, and customer detail usability.
 Implemented
@@ -573,7 +659,6 @@ Confirm pinned notes sort first.
 Confirm notes and audit activity still load correctly.
 Confirm empty/no-results/error states display cleanly.
 Confirm the UI remains client-facing without debug controls.
----
 ✅ Phase 4A — Completed
 Phase 4A added the authentication and role-aware workflow foundation.
 Implemented
@@ -611,7 +696,6 @@ Confirm direct backend Staff edit attempts are rejected.
 Confirm audit entries show the signed-in user.
 Confirm passwords are hashed after login.
 Confirm newly created Staff users can sign in.
----
 ✅ Phase 4B — Completed
 Phase 4B hardened the auth layer by replacing temporary frontend-sent identity headers with JWT-based authentication and authorization.
 Implemented
@@ -644,7 +728,6 @@ Staff users cannot edit customer records.
 Admin users can create Staff users.
 Audit activity records the authenticated user from JWT claims.
 Frontend clears session on unauthorized or expired access.
----
 ✅ Phase 5 — Completed
 Phase 5 added a Staff-to-Admin customer edit approval workflow.
 Implemented
@@ -680,7 +763,6 @@ Submit another Staff edit request.
 Reject it as Admin.
 Confirm the live customer record does not change.
 Confirm audit activity records request, approval, and rejection events.
----
 ✅ Phase 6 — Completed
 Phase 6 improved the Admin approval workflow with clearer review context and filtering.
 Implemented
@@ -711,7 +793,6 @@ Reject it as Admin.
 Switch filter to Rejected.
 Confirm the rejected request appears there.
 Confirm the live customer record only changes after approval.
----
 ✅ Phase 7 — Completed
 Phase 7 added an Admin workflow dashboard and improved request queue visibility.
 Implemented
@@ -745,7 +826,6 @@ Clear request filters.
 Approve or reject an edit request.
 Confirm dashboard counts update after workflow actions.
 Confirm existing approval/rejection behavior still works.
----
 ✅ Phase 8 — Completed
 Phase 8 added password change and Admin Staff password reset workflows.
 Implemented
@@ -774,7 +854,6 @@ As Staff, change own password.
 Sign out.
 Confirm Staff can sign in with the changed password.
 Confirm password audit events are created.
----
 ✅ Phase 9 — Completed
 Phase 9 added Owner/SuperAdmin role hardening and protected role elevation.
 Implemented
@@ -810,7 +889,6 @@ Confirm Owner can still create Admin users.
 Sign in as Staff.
 Confirm Staff cannot see dashboard/user-management/admin tools.
 Confirm Staff can still create customers and submit edit requests.
----
 ✅ Phase 10 — Completed
 Phase 10 added security-sensitive audit entries and a global Admin/Owner audit review workflow.
 Implemented
@@ -852,7 +930,6 @@ Clear audit filters.
 Sign in as Admin and confirm Audit Review is available.
 Sign in as Staff and confirm global Audit Review is not visible.
 Confirm customer-specific audit activity still appears under Customer Detail.
----
 ✅ Phase 11a — Completed
 Phase 11a added database-backed quote records, quote filtering/sorting, customer quote history, and quote status workflow.
 Implemented
@@ -904,7 +981,6 @@ Update quote status to Accepted, Rejected, or Expired.
 Confirm quote status changes are audit logged.
 Confirm `GET /quotes` returns `HTTP/1.1 200 OK`.
 Confirm customer-specific quote history returns the customer’s quotes.
----
 ✅ Phase 11a+ — Completed
 Phase 11a+ added printable quote documents and browser-based quote printing/export.
 Implemented
@@ -950,7 +1026,6 @@ Select the linked customer.
 Confirm the same quote can be opened from Customer Quotes.
 Confirm Audit Review shows `QuoteDocumentGenerated`.
 Confirm backend build succeeds after the raw string template fix.
----
 ✅ Phase 11b — Completed
 Phase 11b added database-backed contracts, quote-linked contract records, customer contract history, contract status workflow, and printable contract documents.
 Implemented
@@ -1011,14 +1086,78 @@ Confirm printable contract document opens in a new tab/window.
 Confirm the contract document includes customer, quote link, amount, status dates, and signature lines.
 Confirm `GET /contracts` returns `HTTP/1.1 200 OK`.
 Confirm customer-specific contract history returns the customer’s contracts.
+✅ Phase 12 — Completed
+Phase 12 added database-backed scopes of work, quote/contract-linked SOW records, customer SOW history, SOW status workflow, and printable SOW documents.
+Implemented
+`ScopeOfWork` model
+`ScopeOfWorks` database table
+EF Core migration for scopes of work
+`DbSet<ScopeOfWork>` and scope-of-work model configuration
+Scope-of-work number generation
+Optional scope-of-work-to-quote linking
+Optional scope-of-work-to-contract linking
+Contract `ScopeOfWorkId` backfill when a SOW is linked to a contract
+Scope-of-work creation endpoint:
+`POST /scopes-of-work`
+Global scope-of-work list/search/filter/sort endpoint:
+`GET /scopes-of-work?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&contractId=&from=&to=`
+Customer-specific scope-of-work history endpoint:
+`GET /customers/{customerId}/scopes-of-work`
+Scope-of-work status update endpoint:
+`POST /scopes-of-work/{scopeId}/status`
+Printable scope-of-work document endpoint:
+`GET /scopes-of-work/{scopeId}/document`
+Supported scope-of-work statuses:
+`Draft`
+`In Review`
+`Approved`
+`Active`
+`Completed`
+`Cancelled`
+Scope-of-work creation audit event:
+`ScopeOfWorkCreated`
+Scope-of-work status change audit event:
+`ScopeOfWorkStatusChanged`
+Scope-of-work document generation audit event:
+`ScopeOfWorkDocumentGenerated`
+Frontend global Scopes of Work panel
+Frontend scope-of-work creation form
+Frontend optional quote linking dropdown
+Frontend optional contract linking dropdown
+Frontend scope-of-work search/filter/sort controls
+Frontend scope-of-work status action controls
+Frontend customer-specific scope-of-work history under Customer Detail
+Frontend `View / Print` button in the global Scopes of Work panel
+Frontend `View / Print` button in the Customer Scopes of Work section
+Vite proxy support for `/scopes-of-work`
+Verified Flow
+Sign in as Owner or Admin.
+Create a scope of work linked to a customer.
+Optionally link the scope of work to an existing quote for that customer.
+Optionally link the scope of work to an existing contract for that customer.
+Confirm scope-of-work creation appears in Audit Review.
+Confirm the scope of work appears in the global Scopes of Work panel.
+Select the linked customer.
+Confirm the scope of work appears under Customer Scopes of Work.
+Filter scopes of work by status.
+Search scopes of work by customer/name/title/scope number/quote number/contract number.
+Sort scopes of work by date, status, customer/name, and amount.
+Update scope-of-work status to In Review.
+Update scope-of-work status to Approved, Active, Completed, or Cancelled.
+Confirm scope-of-work status changes are audit logged.
+Click `View / Print` on a scope of work.
+Confirm printable scope-of-work document opens in a new tab/window.
+Confirm the scope-of-work document includes customer, quote link, contract link, deliverables, assumptions, exclusions, estimated amount, and status dates.
+Confirm `GET /scopes-of-work` returns `HTTP/1.1 200 OK`.
+Confirm customer-specific scope-of-work history returns the customer’s scopes of work.
 ---
 ⚙️ Running the Project
-1. Start PostgreSQL
+Start PostgreSQL
 From the repository root:
 ```bash
 docker compose -f .devcontainer/docker-compose.yml up -d postgres
 ```
-2. Start the Backend API
+Start the Backend API
 ```bash
 cd apps/host-api/src/LocalCRM.Api
 dotnet run --urls=http://0.0.0.0:8080
@@ -1027,7 +1166,7 @@ Expected backend port:
 ```text
 8080
 ```
-3. Start the Frontend
+Start the Frontend
 Open a second terminal:
 ```bash
 cd apps/desktop
@@ -1039,7 +1178,6 @@ Expected frontend port:
 5173
 ```
 Open the forwarded `5173` port in the browser.
----
 🔐 Development Login Users
 Seeded users:
 ```text
@@ -1056,7 +1194,6 @@ staff@localcrm.dev
 Staff123!
 ```
 After successful login, legacy development passwords are upgraded to hashed password storage.
----
 🧪 Quick Test Commands
 Health Check
 ```bash
@@ -1306,6 +1443,66 @@ Expected:
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
 ```
+Create Scope of Work
+Replace `<CUSTOMER_ID>` with an actual customer ID.
+```bash
+curl -i -X POST http://localhost:8080/scopes-of-work \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"customerId":"<CUSTOMER_ID>","quoteId":null,"contractId":null,"title":"Test Scope of Work","description":"Initial scope record","deliverables":"Deliverable 1","assumptions":"Standard assumptions","exclusions":"Out-of-scope work","estimatedAmount":2000.00,"status":"Draft"}'
+```
+Create Scope of Work Linked to Quote and Contract
+Replace `<CUSTOMER_ID>`, `<QUOTE_ID>`, and `<CONTRACT_ID>` with matching IDs.
+```bash
+curl -i -X POST http://localhost:8080/scopes-of-work \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"customerId":"<CUSTOMER_ID>","quoteId":"<QUOTE_ID>","contractId":"<CONTRACT_ID>","title":"Linked Scope of Work","description":"SOW linked to quote and contract","deliverables":"Deliverables list","assumptions":"Assumptions list","exclusions":"Exclusions list","estimatedAmount":2000.00,"status":"Draft"}'
+```
+List Scopes of Work
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/scopes-of-work?status=All&sortBy=date&sortDirection=desc"
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+```
+Filter Scopes of Work by Status
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/scopes-of-work?status=Approved&sortBy=date&sortDirection=desc"
+```
+Search Scopes of Work
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/scopes-of-work?q=test&status=All&sortBy=date&sortDirection=desc"
+```
+Get Customer Scopes of Work
+Replace `<CUSTOMER_ID>` with an actual customer ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/customers/<CUSTOMER_ID>/scopes-of-work
+```
+Update Scope of Work Status
+Replace `<SCOPE_ID>` with an actual scope-of-work ID.
+```bash
+curl -i -X POST http://localhost:8080/scopes-of-work/<SCOPE_ID>/status \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"status":"Approved"}'
+```
+Generate Printable Scope of Work Document
+Replace `<SCOPE_ID>` with an actual scope-of-work ID.
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/scopes-of-work/<SCOPE_ID>/document
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -1423,10 +1620,6 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 12
-Scope-of-work records with linking to customer/quote/contract
-DOCX/PDF import/export
-Physical hard-copy printing
 Phase 13
 Document templates for quotes, contracts, and scope-of-work
 Server-side DOCX/PDF generation
@@ -1440,11 +1633,10 @@ Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Rec
 Phase 18: Backup/export tools
 Phase 19: Tenant/custom branding support
 Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post-login splash page displays section tabs/buttons, pending requests, and audit log
----
 📌 Status
 Current milestone:
 ```text
-Phase 11b complete — Database-backed contracts, optional quote linking, customer contract history, contract search/filter/sort, contract status workflow, printable contract documents, contract audit events, and frontend View / Print controls are working.
+Phase 12 complete — Database-backed scopes of work, optional quote/contract linking, contract ScopeOfWorkId backfill, customer scope-of-work history, SOW search/filter/sort, SOW status workflow, printable SOW documents, SOW audit events, and frontend View / Print controls are working.
 ```
 ---
 👤 Author

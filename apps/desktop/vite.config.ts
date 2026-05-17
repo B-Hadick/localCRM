@@ -46,6 +46,10 @@ export default defineConfig({
       "/contracts": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/scopes-of-work": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }

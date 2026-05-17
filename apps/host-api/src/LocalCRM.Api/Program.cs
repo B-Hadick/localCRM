@@ -1487,6 +1487,476 @@ app.MapPost("/contracts/{contractId:guid}/status", async (
     return Results.Ok(ToContractResponse(contract, customer.Name, quote?.QuoteNumber ?? ""));
 }).RequireAuthorization("AdminOrOwner");
 
+
+app.MapGet("/scopes-of-work", async (
+    string? q,
+    string? status,
+    string? sortBy,
+    string? sortDirection,
+    Guid? customerId,
+    Guid? quoteId,
+    Guid? contractId,
+    DateTime? from,
+    DateTime? to,
+    LocalCrmDbContext db) =>
+{
+    var query = db.ScopeOfWorks.AsQueryable();
+
+    if (customerId.HasValue)
+    {
+        query = query.Where(scope => scope.CustomerId == customerId.Value);
+    }
+
+    if (quoteId.HasValue)
+    {
+        query = query.Where(scope => scope.QuoteId == quoteId.Value);
+    }
+
+    if (contractId.HasValue)
+    {
+        query = query.Where(scope => scope.ContractId == contractId.Value);
+    }
+
+    if (!string.IsNullOrWhiteSpace(status) && status != "All")
+    {
+        query = query.Where(scope => scope.Status == status);
+    }
+
+    if (from.HasValue)
+    {
+        var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        query = query.Where(scope => scope.ScopeDateUtc >= fromUtc);
+    }
+
+    if (to.HasValue)
+    {
+        var toUtcExclusive = DateTime.SpecifyKind(to.Value.Date.AddDays(1), DateTimeKind.Utc);
+        query = query.Where(scope => scope.ScopeDateUtc < toUtcExclusive);
+    }
+
+    var scopeRows = await query.ToListAsync();
+
+    var customerIds = scopeRows
+        .Select(scope => scope.CustomerId)
+        .Distinct()
+        .ToList();
+
+    var quoteIds = scopeRows
+        .Where(scope => scope.QuoteId.HasValue)
+        .Select(scope => scope.QuoteId!.Value)
+        .Distinct()
+        .ToList();
+
+    var contractIds = scopeRows
+        .Where(scope => scope.ContractId.HasValue)
+        .Select(scope => scope.ContractId!.Value)
+        .Distinct()
+        .ToList();
+
+    var customers = await db.Customers
+        .Where(customer => customerIds.Contains(customer.Id))
+        .ToDictionaryAsync(customer => customer.Id);
+
+    var quotes = await db.Quotes
+        .Where(quote => quoteIds.Contains(quote.Id))
+        .ToDictionaryAsync(quote => quote.Id);
+
+    var contracts = await db.Contracts
+        .Where(contract => contractIds.Contains(contract.Id))
+        .ToDictionaryAsync(contract => contract.Id);
+
+    var responses = scopeRows
+        .Select(scope =>
+        {
+            customers.TryGetValue(scope.CustomerId, out var customer);
+
+            Quote? quote = null;
+            if (scope.QuoteId.HasValue)
+            {
+                quotes.TryGetValue(scope.QuoteId.Value, out quote);
+            }
+
+            Contract? contract = null;
+            if (scope.ContractId.HasValue)
+            {
+                contracts.TryGetValue(scope.ContractId.Value, out contract);
+            }
+
+            return ToScopeOfWorkResponse(
+                scope,
+                customer?.Name ?? "Unknown Customer",
+                quote?.QuoteNumber ?? "",
+                contract?.ContractNumber ?? ""
+            );
+        })
+        .ToList();
+
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        var search = q.Trim().ToLower();
+
+        responses = responses
+            .Where(scope =>
+                scope.CustomerName.ToLower().Contains(search) ||
+                scope.ScopeNumber.ToLower().Contains(search) ||
+                scope.Title.ToLower().Contains(search) ||
+                scope.Description.ToLower().Contains(search) ||
+                scope.Deliverables.ToLower().Contains(search) ||
+                scope.QuoteNumber.ToLower().Contains(search) ||
+                scope.ContractNumber.ToLower().Contains(search))
+            .ToList();
+    }
+
+    var descending = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase);
+
+    responses = (sortBy ?? "date").Trim().ToLowerInvariant() switch
+    {
+        "status" => descending
+            ? responses.OrderByDescending(scope => scope.Status).ThenByDescending(scope => scope.ScopeDateUtc).ToList()
+            : responses.OrderBy(scope => scope.Status).ThenByDescending(scope => scope.ScopeDateUtc).ToList(),
+
+        "name" or "customer" => descending
+            ? responses.OrderByDescending(scope => scope.CustomerName).ThenByDescending(scope => scope.ScopeDateUtc).ToList()
+            : responses.OrderBy(scope => scope.CustomerName).ThenByDescending(scope => scope.ScopeDateUtc).ToList(),
+
+        "amount" => descending
+            ? responses.OrderByDescending(scope => scope.EstimatedAmount).ThenByDescending(scope => scope.ScopeDateUtc).ToList()
+            : responses.OrderBy(scope => scope.EstimatedAmount).ThenByDescending(scope => scope.ScopeDateUtc).ToList(),
+
+        _ => descending
+            ? responses.OrderByDescending(scope => scope.ScopeDateUtc).ToList()
+            : responses.OrderBy(scope => scope.ScopeDateUtc).ToList()
+    };
+
+    return Results.Ok(responses.Take(250).ToList());
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/customers/{customerId:guid}/scopes-of-work", async (
+    Guid customerId,
+    LocalCrmDbContext db) =>
+{
+    var customer = await db.Customers.FindAsync(customerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var scopeRows = await db.ScopeOfWorks
+        .Where(scope => scope.CustomerId == customerId)
+        .OrderByDescending(scope => scope.ScopeDateUtc)
+        .Take(100)
+        .ToListAsync();
+
+    var quoteIds = scopeRows
+        .Where(scope => scope.QuoteId.HasValue)
+        .Select(scope => scope.QuoteId!.Value)
+        .Distinct()
+        .ToList();
+
+    var contractIds = scopeRows
+        .Where(scope => scope.ContractId.HasValue)
+        .Select(scope => scope.ContractId!.Value)
+        .Distinct()
+        .ToList();
+
+    var quotes = await db.Quotes
+        .Where(quote => quoteIds.Contains(quote.Id))
+        .ToDictionaryAsync(quote => quote.Id);
+
+    var contracts = await db.Contracts
+        .Where(contract => contractIds.Contains(contract.Id))
+        .ToDictionaryAsync(contract => contract.Id);
+
+    var response = scopeRows
+        .Select(scope =>
+        {
+            Quote? quote = null;
+            if (scope.QuoteId.HasValue)
+            {
+                quotes.TryGetValue(scope.QuoteId.Value, out quote);
+            }
+
+            Contract? contract = null;
+            if (scope.ContractId.HasValue)
+            {
+                contracts.TryGetValue(scope.ContractId.Value, out contract);
+            }
+
+            return ToScopeOfWorkResponse(scope, customer.Name, quote?.QuoteNumber ?? "", contract?.ContractNumber ?? "");
+        })
+        .ToList();
+
+    return Results.Ok(response);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/scopes-of-work", async (
+    CreateScopeOfWorkRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var validationError = ValidateScopeOfWorkInput(input);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var customer = await db.Customers.FindAsync(input.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (input.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(input.QuoteId.Value);
+        if (quote is null)
+        {
+            return Results.NotFound(new { error = "Linked quote not found" });
+        }
+
+        if (quote.CustomerId != input.CustomerId)
+        {
+            return Results.BadRequest(new { error = "Linked quote must belong to the selected customer" });
+        }
+    }
+
+    Contract? contract = null;
+    if (input.ContractId.HasValue)
+    {
+        contract = await db.Contracts.FindAsync(input.ContractId.Value);
+        if (contract is null)
+        {
+            return Results.NotFound(new { error = "Linked contract not found" });
+        }
+
+        if (contract.CustomerId != input.CustomerId)
+        {
+            return Results.BadRequest(new { error = "Linked contract must belong to the selected customer" });
+        }
+
+        if (input.QuoteId.HasValue && contract.QuoteId.HasValue && contract.QuoteId.Value != input.QuoteId.Value)
+        {
+            return Results.BadRequest(new { error = "Linked quote must match the quote linked to the selected contract" });
+        }
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var status = string.IsNullOrWhiteSpace(input.Status)
+        ? "Draft"
+        : input.Status.Trim();
+
+    if (!IsValidScopeOfWorkStatus(status))
+    {
+        return Results.BadRequest(new { error = "Scope of work status must be Draft, In Review, Approved, Active, Completed, or Cancelled" });
+    }
+
+    var scopeOfWork = new ScopeOfWork
+    {
+        Id = Guid.NewGuid(),
+        CustomerId = input.CustomerId,
+        QuoteId = input.QuoteId,
+        ContractId = input.ContractId,
+        ScopeNumber = await GenerateScopeOfWorkNumberAsync(db, nowUtc),
+        Title = input.Title.Trim(),
+        Description = input.Description.Trim(),
+        Deliverables = input.Deliverables.Trim(),
+        Assumptions = input.Assumptions.Trim(),
+        Exclusions = input.Exclusions.Trim(),
+        EstimatedAmount = input.EstimatedAmount,
+        Status = status,
+        ScopeDateUtc = nowUtc,
+        ReviewedAtUtc = status == "In Review" ? nowUtc : null,
+        ApprovedAtUtc = status == "Approved" ? nowUtc : null,
+        ActivatedAtUtc = status == "Active" ? nowUtc : null,
+        CompletedAtUtc = status == "Completed" ? nowUtc : null,
+        CancelledAtUtc = status == "Cancelled" ? nowUtc : null,
+        CreatedAtUtc = nowUtc,
+        UpdatedAtUtc = nowUtc
+    };
+
+    db.ScopeOfWorks.Add(scopeOfWork);
+
+    if (contract is not null)
+    {
+        contract.ScopeOfWorkId = scopeOfWork.Id;
+        contract.UpdatedAtUtc = nowUtc;
+    }
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "ScopeOfWork",
+        EntityId = scopeOfWork.Id.ToString(),
+        Action = "ScopeOfWorkCreated",
+        Details = contract is null
+            ? $"Scope of work '{scopeOfWork.ScopeNumber}' created for customer '{customer.Name}'."
+            : $"Scope of work '{scopeOfWork.ScopeNumber}' created for customer '{customer.Name}' and linked to contract '{contract.ContractNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Scope of work {ScopeNumber} created for customer {CustomerId} by {PerformedBy}", scopeOfWork.ScopeNumber, customer.Id, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/scopes-of-work/{scopeOfWork.Id}", ToScopeOfWorkResponse(
+        scopeOfWork,
+        customer.Name,
+        quote?.QuoteNumber ?? "",
+        contract?.ContractNumber ?? ""
+    ));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/scopes-of-work/{scopeId:guid}/document", async (
+    Guid scopeId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var scopeOfWork = await db.ScopeOfWorks.FindAsync(scopeId);
+    if (scopeOfWork is null)
+    {
+        return Results.NotFound(new { error = "Scope of work not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(scopeOfWork.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (scopeOfWork.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(scopeOfWork.QuoteId.Value);
+    }
+
+    Contract? contract = null;
+    if (scopeOfWork.ContractId.HasValue)
+    {
+        contract = await db.Contracts.FindAsync(scopeOfWork.ContractId.Value);
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var html = BuildScopeOfWorkDocumentHtml(scopeOfWork, customer, quote, contract, nowUtc);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "ScopeOfWork",
+        EntityId = scopeOfWork.Id.ToString(),
+        Action = "ScopeOfWorkDocumentGenerated",
+        Details = $"Printable document generated for scope of work '{scopeOfWork.ScopeNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Scope of work document generated for {ScopeNumber} by {PerformedBy}", scopeOfWork.ScopeNumber, performedBy);
+
+    return Results.Content(html, "text/html; charset=utf-8");
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/scopes-of-work/{scopeId:guid}/status", async (
+    Guid scopeId,
+    UpdateScopeOfWorkStatusRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var nowUtc = DateTime.UtcNow;
+
+    var scopeOfWork = await db.ScopeOfWorks.FindAsync(scopeId);
+    if (scopeOfWork is null)
+    {
+        return Results.NotFound(new { error = "Scope of work not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(scopeOfWork.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (scopeOfWork.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(scopeOfWork.QuoteId.Value);
+    }
+
+    Contract? contract = null;
+    if (scopeOfWork.ContractId.HasValue)
+    {
+        contract = await db.Contracts.FindAsync(scopeOfWork.ContractId.Value);
+    }
+
+    var status = input.Status.Trim();
+    if (!IsValidScopeOfWorkStatus(status))
+    {
+        return Results.BadRequest(new { error = "Scope of work status must be Draft, In Review, Approved, Active, Completed, or Cancelled" });
+    }
+
+    var previousStatus = scopeOfWork.Status;
+
+    scopeOfWork.Status = status;
+    scopeOfWork.UpdatedAtUtc = nowUtc;
+
+    if (status == "In Review")
+    {
+        scopeOfWork.ReviewedAtUtc = nowUtc;
+    }
+
+    if (status == "Approved")
+    {
+        scopeOfWork.ApprovedAtUtc = nowUtc;
+    }
+
+    if (status == "Active")
+    {
+        scopeOfWork.ActivatedAtUtc = nowUtc;
+    }
+
+    if (status == "Completed")
+    {
+        scopeOfWork.CompletedAtUtc = nowUtc;
+    }
+
+    if (status == "Cancelled")
+    {
+        scopeOfWork.CancelledAtUtc = nowUtc;
+    }
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "ScopeOfWork",
+        EntityId = scopeOfWork.Id.ToString(),
+        Action = "ScopeOfWorkStatusChanged",
+        Details = $"Scope of work '{scopeOfWork.ScopeNumber}' status changed from '{previousStatus}' to '{scopeOfWork.Status}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Scope of work {ScopeNumber} status changed from {PreviousStatus} to {Status} by {PerformedBy}", scopeOfWork.ScopeNumber, previousStatus, scopeOfWork.Status, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(ToScopeOfWorkResponse(
+        scopeOfWork,
+        customer.Name,
+        quote?.QuoteNumber ?? "",
+        contract?.ContractNumber ?? ""
+    ));
+}).RequireAuthorization("AdminOrOwner");
+
 app.MapGet("/customer-edit-requests", async (
     string? status,
     string? requestedBy,
@@ -1773,6 +2243,348 @@ app.MapGet("/audit", async (
 app.Run();
 
 
+
+
+static string BuildScopeOfWorkDocumentHtml(ScopeOfWork scopeOfWork, Customer customer, Quote? quote, Contract? contract, DateTime generatedAtUtc)
+{
+    var customerAddress = string.Join(", ", new[]
+        {
+            customer.AddressLine1,
+            customer.AddressLine2,
+            customer.City,
+            customer.State,
+            customer.PostalCode
+        }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    var statusDates = new List<string>();
+
+    if (scopeOfWork.ReviewedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>In Review:</strong> {FormatDateForDocument(scopeOfWork.ReviewedAtUtc.Value)}</div>");
+    }
+
+    if (scopeOfWork.ApprovedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Approved:</strong> {FormatDateForDocument(scopeOfWork.ApprovedAtUtc.Value)}</div>");
+    }
+
+    if (scopeOfWork.ActivatedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Active:</strong> {FormatDateForDocument(scopeOfWork.ActivatedAtUtc.Value)}</div>");
+    }
+
+    if (scopeOfWork.CompletedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Completed:</strong> {FormatDateForDocument(scopeOfWork.CompletedAtUtc.Value)}</div>");
+    }
+
+    if (scopeOfWork.CancelledAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Cancelled:</strong> {FormatDateForDocument(scopeOfWork.CancelledAtUtc.Value)}</div>");
+    }
+
+    var statusDatesHtml = statusDates.Count == 0
+        ? "<div class=\"muted\">No status dates recorded.</div>"
+        : string.Join("\n        ", statusDates);
+
+    var linkedQuoteHtml = quote is null
+        ? "<div class=\"muted\">No linked quote.</div>"
+        : $"<div><strong>Linked Quote:</strong> {EncodeHtml(quote.QuoteNumber)}</div><div><strong>Quote Status:</strong> {EncodeHtml(quote.Status)}</div>";
+
+    var linkedContractHtml = contract is null
+        ? "<div class=\"muted\">No linked contract.</div>"
+        : $"<div><strong>Linked Contract:</strong> {EncodeHtml(contract.ContractNumber)}</div><div><strong>Contract Status:</strong> {EncodeHtml(contract.Status)}</div>";
+
+    return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Scope of Work {{EncodeHtml(scopeOfWork.ScopeNumber)}}</title>
+  <style>
+    :root {
+      color: #1f2933;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    body {
+      margin: 0;
+      background: #f4f6f8;
+    }
+
+    .page {
+      max-width: 850px;
+      margin: 0 auto;
+      padding: 32px;
+      background: white;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 2px solid #1f2933;
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: 0.04em;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #52606d;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border: 1px solid #bcccdc;
+      border-radius: 999px;
+      background: #e8f1fb;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+
+    .box {
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 16px;
+      background: #f8fafc;
+      margin-bottom: 16px;
+    }
+
+    .scope-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .section-content {
+      line-height: 1.5;
+      min-height: 64px;
+      white-space: normal;
+    }
+
+    .amount {
+      text-align: right;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .footer {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid #d9e2ec;
+      color: #52606d;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #1f2933;
+      color: white;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+        min-height: auto;
+      }
+
+      .actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="actions">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+
+    <section class="topbar">
+      <div>
+        <h1>SCOPE OF WORK</h1>
+        <div class="muted">LocalCRM</div>
+      </div>
+
+      <div>
+        <div><strong>SOW #:</strong> {{EncodeHtml(scopeOfWork.ScopeNumber)}}</div>
+        <div><strong>Status:</strong> <span class="badge">{{EncodeHtml(scopeOfWork.Status)}}</span></div>
+        <div><strong>SOW Date:</strong> {{FormatDateForDocument(scopeOfWork.ScopeDateUtc)}}</div>
+        <div><strong>Generated:</strong> {{FormatDateForDocument(generatedAtUtc)}}</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="box">
+        <h2>Customer</h2>
+        <div><strong>{{EncodeHtml(customer.Name)}}</strong></div>
+        <div>{{EncodeHtml(customer.Type)}}</div>
+        <div>{{EncodeHtml(customer.Email)}}</div>
+        <div>{{EncodeHtml(customer.Phone)}}</div>
+        <div>{{EncodeHtml(customerAddress)}}</div>
+      </div>
+
+      <div class="box">
+        <h2>Links</h2>
+        {{linkedQuoteHtml}}
+        {{linkedContractHtml}}
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="box">
+        <h2>Status Dates</h2>
+        {{statusDatesHtml}}
+      </div>
+
+      <div class="box">
+        <h2>Estimated Amount</h2>
+        <div class="amount">{{FormatCurrencyForDocument(scopeOfWork.EstimatedAmount)}}</div>
+      </div>
+    </section>
+
+    <section class="box">
+      <div class="scope-title">{{EncodeHtml(scopeOfWork.Title)}}</div>
+      <div class="section-content">{{EncodeHtml(scopeOfWork.Description).Replace("\n", "<br />")}}</div>
+    </section>
+
+    <section class="box">
+      <h2>Deliverables</h2>
+      <div class="section-content">{{EncodeHtml(scopeOfWork.Deliverables).Replace("\n", "<br />")}}</div>
+    </section>
+
+    <section class="box">
+      <h2>Assumptions</h2>
+      <div class="section-content">{{EncodeHtml(scopeOfWork.Assumptions).Replace("\n", "<br />")}}</div>
+    </section>
+
+    <section class="box">
+      <h2>Exclusions</h2>
+      <div class="section-content">{{EncodeHtml(scopeOfWork.Exclusions).Replace("\n", "<br />")}}</div>
+    </section>
+
+    <section class="footer">
+      <div>This document was generated from LocalCRM scope of work record {{EncodeHtml(scopeOfWork.Id.ToString())}}.</div>
+      <div>Use the browser print dialog to print a hard copy or save as PDF.</div>
+    </section>
+  </main>
+</body>
+</html>
+""";
+}
+
+static async Task<string> GenerateScopeOfWorkNumberAsync(LocalCrmDbContext db, DateTime nowUtc)
+{
+    var prefix = $"SOW-{nowUtc:yyyyMMdd}";
+    var countForDay = await db.ScopeOfWorks.CountAsync(scope => scope.ScopeNumber.StartsWith(prefix));
+    return $"{prefix}-{countForDay + 1:0000}";
+}
+
+static ScopeOfWorkListResponse ToScopeOfWorkResponse(ScopeOfWork scopeOfWork, string customerName, string quoteNumber, string contractNumber)
+{
+    return new ScopeOfWorkListResponse(
+        scopeOfWork.Id,
+        scopeOfWork.CustomerId,
+        customerName,
+        scopeOfWork.QuoteId,
+        quoteNumber,
+        scopeOfWork.ContractId,
+        contractNumber,
+        scopeOfWork.ScopeNumber,
+        scopeOfWork.Title,
+        scopeOfWork.Description,
+        scopeOfWork.Deliverables,
+        scopeOfWork.Assumptions,
+        scopeOfWork.Exclusions,
+        scopeOfWork.EstimatedAmount,
+        scopeOfWork.Status,
+        scopeOfWork.ScopeDateUtc,
+        scopeOfWork.ReviewedAtUtc,
+        scopeOfWork.ApprovedAtUtc,
+        scopeOfWork.ActivatedAtUtc,
+        scopeOfWork.CompletedAtUtc,
+        scopeOfWork.CancelledAtUtc,
+        scopeOfWork.CreatedAtUtc,
+        scopeOfWork.UpdatedAtUtc
+    );
+}
+
+static string ValidateScopeOfWorkInput(CreateScopeOfWorkRequest input)
+{
+    if (input.CustomerId == Guid.Empty)
+    {
+        return "Customer is required";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Title))
+    {
+        return "Scope of work title is required";
+    }
+
+    if (input.Title.Trim().Length < 2)
+    {
+        return "Scope of work title must be at least 2 characters";
+    }
+
+    if (input.EstimatedAmount < 0)
+    {
+        return "Estimated amount cannot be negative";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Status) && !IsValidScopeOfWorkStatus(input.Status.Trim()))
+    {
+        return "Scope of work status must be Draft, In Review, Approved, Active, Completed, or Cancelled";
+    }
+
+    return "";
+}
+
+static bool IsValidScopeOfWorkStatus(string status)
+{
+    return status == "Draft" ||
+        status == "In Review" ||
+        status == "Approved" ||
+        status == "Active" ||
+        status == "Completed" ||
+        status == "Cancelled";
+}
 
 static string BuildContractDocumentHtml(Contract contract, Customer customer, Quote? quote, DateTime generatedAtUtc)
 {
@@ -2754,6 +3566,50 @@ static bool IsValidEmail(string email)
     return email.Contains('@') && email.Contains('.');
 }
 
+
+
+public record CreateScopeOfWorkRequest(
+    Guid CustomerId,
+    Guid? QuoteId,
+    Guid? ContractId,
+    string Title,
+    string Description,
+    string Deliverables,
+    string Assumptions,
+    string Exclusions,
+    decimal EstimatedAmount,
+    string Status
+);
+
+public record UpdateScopeOfWorkStatusRequest(
+    string Status
+);
+
+public record ScopeOfWorkListResponse(
+    Guid Id,
+    Guid CustomerId,
+    string CustomerName,
+    Guid? QuoteId,
+    string QuoteNumber,
+    Guid? ContractId,
+    string ContractNumber,
+    string ScopeNumber,
+    string Title,
+    string Description,
+    string Deliverables,
+    string Assumptions,
+    string Exclusions,
+    decimal EstimatedAmount,
+    string Status,
+    DateTime ScopeDateUtc,
+    DateTime? ReviewedAtUtc,
+    DateTime? ApprovedAtUtc,
+    DateTime? ActivatedAtUtc,
+    DateTime? CompletedAtUtc,
+    DateTime? CancelledAtUtc,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc
+);
 
 public record CreateContractRequest(
     Guid CustomerId,
