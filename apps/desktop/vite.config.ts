@@ -42,6 +42,10 @@ export default defineConfig({
       "/quotes": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/contracts": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }

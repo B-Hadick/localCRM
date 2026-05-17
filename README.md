@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, quote document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, quote/contract document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -16,7 +16,12 @@ Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
 Quote record workflow
 Quote status workflow
+Contract record workflow
+Contract status workflow
+Optional quote-to-contract linking
+Future scope-of-work linking field
 Printable quote document workflow
+Printable contract document workflow
 Browser-printable HTML document generation
 Current-vs-requested approval review data
 Dashboard summary endpoint
@@ -26,7 +31,7 @@ Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
 Admin/Owner Staff password reset workflow
 Owner-only Admin user creation workflow
-Security-sensitive audit events for login, password changes/resets, user creation, quote activity, and quote document generation
+Security-sensitive audit events for login, password changes/resets, user creation, quote activity, quote document generation, contract activity, and contract document generation
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -44,6 +49,11 @@ Quote list/search/filter/sort workflow
 Quote status controls
 Customer-specific quote history
 Quote View / Print workflow
+Contract creation workflow
+Contract list/search/filter/sort workflow
+Contract status controls
+Customer-specific contract history
+Contract View / Print workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -102,6 +112,8 @@ Owner users can create, edit, and review customer workflows
 Owner users can review global audit activity
 Owner users can create quotes and manage quote statuses
 Owner users can view and print quote documents
+Owner users can create contracts and manage contract statuses
+Owner users can view and print contract documents
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -109,6 +121,8 @@ Admin users can reset Staff passwords
 Admin users can review global audit activity
 Admin users can create quotes and manage quote statuses
 Admin users can view and print quote documents
+Admin users can create contracts and manage contract statuses
+Admin users can view and print contract documents
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -116,9 +130,12 @@ Staff users can view customer notes and customer-specific audit activity
 Staff users can create quotes
 Staff users can view quote records
 Staff users can view and print quote documents
+Staff users can create contracts
+Staff users can view contract records
+Staff users can view and print contract documents
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
-Staff users cannot manage quote status transitions
+Staff users cannot manage quote or contract status transitions
 Staff users can submit customer edit requests
 Owner/Admin users can approve or reject Staff-submitted edit requests
 Backend enforces Owner-only Admin creation
@@ -128,6 +145,7 @@ Backend enforces Admin/Owner Staff password reset
 Backend enforces Admin/Owner edit-request approval/rejection
 Backend enforces Admin/Owner-only global audit review
 Backend enforces Admin/Owner-only quote status updates
+Backend enforces Admin/Owner-only contract status updates
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -211,6 +229,58 @@ Browser print dialog supports local “Save as PDF”
 Quote document generation is audit logged
 Printable quote document output uses safe HTML encoding for customer and quote fields
 Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
+Contract Management
+Create contract records linked to customers
+Optionally link contracts to quote records
+Include a future `ScopeOfWorkId` field for Phase 12 integration
+Store contract number, title, description, amount, status, and dates
+Automatically generate contract numbers
+View global contract list
+View customer-specific contract history under Customer Detail
+Search contracts by customer name, contract number, title, description, and quote number
+Filter contracts by status
+Filter contracts by contract date range
+Sort contracts by:
+Date
+Status
+Customer/name
+Amount
+Supported contract statuses:
+Draft
+Sent
+Signed
+Completed/Billable
+Cancelled
+Admin/Owner users can update contract statuses
+Contract creation is audit logged
+Contract status changes are audit logged
+Contract Documents
+Generate printable contract documents from database-backed contract records
+View/print contract documents from the global Contracts panel
+View/print contract documents from the Customer Contracts section
+Printable contract document includes:
+Contract number
+Contract status
+Contract date
+Generated date
+Customer name
+Customer type
+Customer email
+Customer phone
+Customer address
+Linked quote number/status when available
+Future scope-of-work ID when available
+Contract title
+Contract description
+Contract amount
+Sent/signed/completed-billable/cancelled dates when available
+Signature lines
+Built-in `Print / Save as PDF` button inside the contract document
+Browser print supports physical hard-copy printing
+Browser print dialog supports local “Save as PDF”
+Contract document generation is audit logged
+Printable contract document output uses safe HTML encoding for customer, quote, and contract fields
+Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -218,6 +288,7 @@ Filter customers by status
 Combine text search with status filtering
 Customer result count display
 Backend-backed quote search/filter/sort
+Backend-backed contract search/filter/sort
 Backend-backed audit search/filter
 Backend-backed edit request filtering
 Customer Notes
@@ -244,6 +315,9 @@ Audit entries for quote creation
 Audit entries for quote status changes
 Audit entries for automatic quote expiration
 Audit entries for printable quote document generation
+Audit entries for contract creation
+Audit entries for contract status changes
+Audit entries for printable contract document generation
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -273,11 +347,16 @@ Quote filter/sort state
 Quote status action state
 Quote document opening state
 Customer quote history state
+Contract form state
+Contract filter/sort state
+Contract status action state
+Contract document opening state
+Customer contract history state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
 Global audit review filter state
-Clear validation messages for customer, quote, note, login, Staff user, Admin user, password, audit, and edit request forms
+Clear validation messages for customer, quote, contract, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -309,6 +388,12 @@ Quotes
 `POST /quotes`
 `GET /quotes/{quoteId}/document`
 `POST /quotes/{quoteId}/status`
+Contracts
+`GET /contracts?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&from=&to=`
+`GET /customers/{customerId}/contracts`
+`POST /contracts`
+`GET /contracts/{contractId}/document`
+`POST /contracts/{contractId}/status`
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
@@ -337,6 +422,10 @@ Require a valid JWT bearer token:
 `GET /customers/{customerId}/quotes`
 `POST /quotes`
 `GET /quotes/{quoteId}/document`
+`GET /contracts?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&from=&to=`
+`GET /customers/{customerId}/contracts`
+`POST /contracts`
+`GET /contracts/{contractId}/document`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -350,6 +439,7 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `POST /users/staff`
 `POST /users/{userId}/reset-password`
 `POST /quotes/{quoteId}/status`
+`POST /contracts/{contractId}/status`
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
@@ -368,6 +458,10 @@ Backend query/filter design
 Customer workflow modeling
 Quote workflow modeling
 Quote status lifecycle handling
+Contract workflow modeling
+Contract status lifecycle handling
+Optional quote-to-contract linking
+Future scope-of-work linking design
 Automatic expiration logic
 Printable document generation from database records
 Browser-based hard-copy printing workflow
@@ -857,6 +951,67 @@ Confirm the same quote can be opened from Customer Quotes.
 Confirm Audit Review shows `QuoteDocumentGenerated`.
 Confirm backend build succeeds after the raw string template fix.
 ---
+✅ Phase 11b — Completed
+Phase 11b added database-backed contracts, quote-linked contract records, customer contract history, contract status workflow, and printable contract documents.
+Implemented
+`Contract` model
+`Contracts` database table
+EF Core migration for contracts
+`DbSet<Contract>` and contract model configuration
+Contract number generation
+Optional contract-to-quote linking
+Future `ScopeOfWorkId` field for Phase 12
+Contract creation endpoint:
+`POST /contracts`
+Global contract list/search/filter/sort endpoint:
+`GET /contracts?q=&status=&sortBy=&sortDirection=&customerId=&quoteId=&from=&to=`
+Customer-specific contract history endpoint:
+`GET /customers/{customerId}/contracts`
+Contract status update endpoint:
+`POST /contracts/{contractId}/status`
+Printable contract document endpoint:
+`GET /contracts/{contractId}/document`
+Supported contract statuses:
+`Draft`
+`Sent`
+`Signed`
+`Completed/Billable`
+`Cancelled`
+Contract creation audit event:
+`ContractCreated`
+Contract status change audit event:
+`ContractStatusChanged`
+Contract document generation audit event:
+`ContractDocumentGenerated`
+Frontend global Contracts panel
+Frontend contract creation form
+Frontend optional quote linking dropdown
+Frontend contract search/filter/sort controls
+Frontend contract status action controls
+Frontend customer-specific contract history under Customer Detail
+Frontend `View / Print` button in the global Contracts panel
+Frontend `View / Print` button in the Customer Contracts section
+Vite proxy support for `/contracts`
+Verified Flow
+Sign in as Owner or Admin.
+Create a contract linked to a customer.
+Optionally link the contract to an existing quote for that customer.
+Confirm contract creation appears in Audit Review.
+Confirm the contract appears in the global Contracts panel.
+Select the linked customer.
+Confirm the contract appears under Customer Contracts.
+Filter contracts by status.
+Search contracts by customer/name/title/contract number/quote number.
+Sort contracts by date, status, customer/name, and amount.
+Update contract status to Sent.
+Update contract status to Signed, Completed/Billable, or Cancelled.
+Confirm contract status changes are audit logged.
+Click `View / Print` on a contract.
+Confirm printable contract document opens in a new tab/window.
+Confirm the contract document includes customer, quote link, amount, status dates, and signature lines.
+Confirm `GET /contracts` returns `HTTP/1.1 200 OK`.
+Confirm customer-specific contract history returns the customer’s contracts.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -1091,6 +1246,66 @@ Expected:
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
 ```
+Create Contract
+Replace `<CUSTOMER_ID>` with an actual customer ID. Replace `<QUOTE_ID>` with an actual quote ID or use `null`.
+```bash
+curl -i -X POST http://localhost:8080/contracts \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"customerId":"<CUSTOMER_ID>","quoteId":null,"scopeOfWorkId":null,"title":"Test Contract","description":"Initial contract record","amount":1500.00,"status":"Draft"}'
+```
+Create Contract Linked to Quote
+Replace `<CUSTOMER_ID>` and `<QUOTE_ID>` with matching customer/quote IDs.
+```bash
+curl -i -X POST http://localhost:8080/contracts \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"customerId":"<CUSTOMER_ID>","quoteId":"<QUOTE_ID>","scopeOfWorkId":null,"title":"Quote-Linked Contract","description":"Contract created from quote","amount":1500.00,"status":"Draft"}'
+```
+List Contracts
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/contracts?status=All&sortBy=date&sortDirection=desc"
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+```
+Filter Contracts by Status
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/contracts?status=Signed&sortBy=date&sortDirection=desc"
+```
+Search Contracts
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/contracts?q=test&status=All&sortBy=date&sortDirection=desc"
+```
+Get Customer Contracts
+Replace `<CUSTOMER_ID>` with an actual customer ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/customers/<CUSTOMER_ID>/contracts
+```
+Update Contract Status
+Replace `<CONTRACT_ID>` with an actual contract ID.
+```bash
+curl -i -X POST http://localhost:8080/contracts/<CONTRACT_ID>/status \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"status":"Signed"}'
+```
+Generate Printable Contract Document
+Replace `<CONTRACT_ID>` with an actual contract ID.
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/contracts/<CONTRACT_ID>/document
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -1208,11 +1423,6 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 11b
-Contracts with DOCX/PDF import/export and physical hard-copy printing
-Link contracts to customers, quotes, and scope of work
-Mark contracts as `signed` or `completed/billable`
-Sort contracts by name, status, and date
 Phase 12
 Scope-of-work records with linking to customer/quote/contract
 DOCX/PDF import/export
@@ -1221,7 +1431,7 @@ Phase 13
 Document templates for quotes, contracts, and scope-of-work
 Server-side DOCX/PDF generation
 Document template mapping
-Quote attachment/document storage strategy
+Quote/contract/scope-of-work attachment and document storage strategy
 Later Phases
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
@@ -1234,7 +1444,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 11a+ complete — Printable quote documents, browser-based hard-copy printing, browser Save-as-PDF workflow, quote document audit events, and frontend View / Print controls are working.
+Phase 11b complete — Database-backed contracts, optional quote linking, customer contract history, contract search/filter/sort, contract status workflow, printable contract documents, contract audit events, and frontend View / Print controls are working.
 ```
 ---
 👤 Author

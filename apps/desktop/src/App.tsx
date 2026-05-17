@@ -192,6 +192,46 @@ type QuoteFilters = {
   to: string;
 };
 
+type Contract = {
+  id: string;
+  customerId: string;
+  customerName: string;
+  quoteId: string | null;
+  quoteNumber: string;
+  scopeOfWorkId: string | null;
+  contractNumber: string;
+  title: string;
+  description: string;
+  amount: number;
+  status: string;
+  contractDateUtc: string;
+  sentAtUtc: string | null;
+  signedAtUtc: string | null;
+  completedBillableAtUtc: string | null;
+  cancelledAtUtc: string | null;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+};
+
+type ContractForm = {
+  customerId: string;
+  quoteId: string;
+  scopeOfWorkId: string;
+  title: string;
+  description: string;
+  amount: string;
+  status: string;
+};
+
+type ContractFilters = {
+  q: string;
+  status: string;
+  sortBy: string;
+  sortDirection: string;
+  from: string;
+  to: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -255,6 +295,25 @@ const emptyQuoteFilters: QuoteFilters = {
   to: ""
 };
 
+const emptyContractForm: ContractForm = {
+  customerId: "",
+  quoteId: "",
+  scopeOfWorkId: "",
+  title: "",
+  description: "",
+  amount: "",
+  status: "Draft"
+};
+
+const emptyContractFilters: ContractFilters = {
+  q: "",
+  status: "All",
+  sortBy: "date",
+  sortDirection: "desc",
+  from: "",
+  to: ""
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -290,6 +349,8 @@ function App() {
   const [globalAuditLogs, setGlobalAuditLogs] = useState<AuditLog[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [customerQuotes, setCustomerQuotes] = useState<Quote[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [customerContracts, setCustomerContracts] = useState<Contract[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -309,6 +370,7 @@ function App() {
   const [requestToDate, setRequestToDate] = useState("");
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
   const [quoteFilters, setQuoteFilters] = useState<QuoteFilters>(emptyQuoteFilters);
+  const [contractFilters, setContractFilters] = useState<ContractFilters>(emptyContractFilters);
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -316,6 +378,7 @@ function App() {
   });
 
   const [quoteForm, setQuoteForm] = useState<QuoteForm>(emptyQuoteForm);
+  const [contractForm, setContractForm] = useState<ContractForm>(emptyContractForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -520,6 +583,36 @@ function App() {
     return "";
   }
 
+  function validateContractForm(input: ContractForm) {
+    if (!input.customerId) {
+      return "Select a customer before creating a contract.";
+    }
+
+    if (!input.title.trim()) {
+      return "Contract title is required.";
+    }
+
+    if (input.title.trim().length < 2) {
+      return "Contract title must be at least 2 characters.";
+    }
+
+    const amount = Number(input.amount);
+
+    if (Number.isNaN(amount)) {
+      return "Contract amount must be a valid number.";
+    }
+
+    if (amount < 0) {
+      return "Contract amount cannot be negative.";
+    }
+
+    if (!["Draft", "Sent", "Signed", "Completed/Billable", "Cancelled"].includes(input.status)) {
+      return "Contract status must be Draft, Sent, Signed, Completed/Billable, or Cancelled.";
+    }
+
+    return "";
+  }
+
   function validateQuoteForm(input: QuoteForm) {
     if (!input.customerId) {
       return "Select a customer before creating a quote.";
@@ -628,6 +721,8 @@ function App() {
     setGlobalAuditLogs([]);
     setQuotes([]);
     setCustomerQuotes([]);
+    setContracts([]);
+    setCustomerContracts([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -734,6 +829,8 @@ function App() {
     setGlobalAuditLogs([]);
     setQuotes([]);
     setCustomerQuotes([]);
+    setContracts([]);
+    setCustomerContracts([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -1037,6 +1134,91 @@ function App() {
     }
   }
 
+  async function loadContracts() {
+    if (!currentUser) {
+      setContracts([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (contractFilters.q.trim()) {
+        params.set("q", contractFilters.q.trim());
+      }
+
+      if (contractFilters.status !== "All") {
+        params.set("status", contractFilters.status);
+      }
+
+      if (contractFilters.sortBy) {
+        params.set("sortBy", contractFilters.sortBy);
+      }
+
+      if (contractFilters.sortDirection) {
+        params.set("sortDirection", contractFilters.sortDirection);
+      }
+
+      if (contractFilters.from) {
+        params.set("from", contractFilters.from);
+      }
+
+      if (contractFilters.to) {
+        params.set("to", contractFilters.to);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/contracts?${queryString}` : "/contracts";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as Contract[];
+      setContracts(data);
+    } catch (error) {
+      console.error(error);
+      setContracts([]);
+      setStatus("Failed to load contracts", "error");
+    }
+  }
+
+  async function loadCustomerContracts(customerId: string) {
+    if (!currentUser) {
+      setCustomerContracts([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/customers/${customerId}/contracts`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as Contract[];
+      setCustomerContracts(data);
+    } catch (error) {
+      console.error(error);
+      setCustomerContracts([]);
+      setStatus("Failed to load customer contracts", "error");
+    }
+  }
+
   async function loadCustomerNotes(customerId: string) {
     if (!currentUser) {
       return;
@@ -1219,6 +1401,7 @@ function App() {
     if (currentUser) {
       loadCustomers();
       loadQuotes();
+      loadContracts();
     }
   }, [
     currentUser,
@@ -1229,7 +1412,13 @@ function App() {
     quoteFilters.sortBy,
     quoteFilters.sortDirection,
     quoteFilters.from,
-    quoteFilters.to
+    quoteFilters.to,
+    contractFilters.q,
+    contractFilters.status,
+    contractFilters.sortBy,
+    contractFilters.sortDirection,
+    contractFilters.from,
+    contractFilters.to
   ]);
 
   useEffect(() => {
@@ -1263,7 +1452,12 @@ function App() {
       loadAuditLogs(selectedCustomer.id);
       loadCustomerEditRequests(selectedCustomer.id);
       loadCustomerQuotes(selectedCustomer.id);
+      loadCustomerContracts(selectedCustomer.id);
       setQuoteForm((current) => ({
+        ...current,
+        customerId: selectedCustomer.id
+      }));
+      setContractForm((current) => ({
         ...current,
         customerId: selectedCustomer.id
       }));
@@ -1680,6 +1874,162 @@ function App() {
     }
   }
 
+  async function handleContractSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before creating contracts.", "error");
+      return;
+    }
+
+    const validationError = validateContractForm(contractForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Creating contract...", "info");
+
+    try {
+      const response = await fetch("/contracts", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          customerId: contractForm.customerId,
+          quoteId: contractForm.quoteId || null,
+          scopeOfWorkId: contractForm.scopeOfWorkId || null,
+          title: contractForm.title.trim(),
+          description: contractForm.description.trim(),
+          amount: Number(contractForm.amount),
+          status: contractForm.status
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const createdContract = (await response.json()) as Contract;
+
+      setContractForm({
+        ...emptyContractForm,
+        customerId: selectedCustomer?.id ?? ""
+      });
+      setStatus(`Contract "${createdContract.contractNumber}" created successfully.`, "success");
+      await loadContracts();
+
+      if (selectedCustomer) {
+        await loadCustomerContracts(selectedCustomer.id);
+        await loadAuditLogs(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to create contract.", "error");
+    }
+  }
+
+  async function openContractDocument(contractId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before viewing contract documents.", "error");
+      return;
+    }
+
+    setStatus("Opening printable contract document...", "info");
+
+    try {
+      const response = await fetch(`/contracts/${contractId}/document`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const html = await response.text();
+      const blob = new Blob([html], { type: "text/html" });
+      const documentUrl = URL.createObjectURL(blob);
+
+      window.open(documentUrl, "_blank", "noopener,noreferrer");
+      setStatus("Printable contract document opened.", "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to open contract document.", "error");
+    }
+  }
+
+  async function handleContractStatusUpdate(contractId: string, status: string) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can update contract status.", "error");
+      return;
+    }
+
+    setStatus("Updating contract status...", "info");
+
+    try {
+      const response = await fetch(`/contracts/${contractId}/status`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({ status })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setStatus(`Contract marked ${status}.`, "success");
+      await loadContracts();
+
+      if (selectedCustomer) {
+        await loadCustomerContracts(selectedCustomer.id);
+      }
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to update contract status.", "error");
+    }
+  }
+
   async function handleAdminUserSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -1905,6 +2255,10 @@ function App() {
     setQuoteFilters(emptyQuoteFilters);
   }
 
+  function clearContractFilters() {
+    setContractFilters(emptyContractFilters);
+  }
+
   const staffUsers = users.filter((user) => user.role === "Staff" && user.isActive);
 
   const hasActiveFilters = searchTerm.trim() || statusFilter !== "All";
@@ -1929,6 +2283,14 @@ function App() {
     quoteFilters.sortDirection !== "desc" ||
     quoteFilters.from ||
     quoteFilters.to;
+
+  const hasContractFilters =
+    contractFilters.q.trim() ||
+    contractFilters.status !== "All" ||
+    contractFilters.sortBy !== "date" ||
+    contractFilters.sortDirection !== "desc" ||
+    contractFilters.from ||
+    contractFilters.to;
 
   const sortedNotes = [...notes].sort((a, b) => {
     if (a.isPinned !== b.isPinned) {
@@ -2547,6 +2909,233 @@ function App() {
         </section>
       </section>
 
+      <section className="layout-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Contracts</h2>
+            <span className="count-chip">{contracts.length}</span>
+          </div>
+
+          <div className="quote-filter-grid">
+            <label>
+              Search
+              <input
+                value={contractFilters.q}
+                onChange={(e) => setContractFilters({ ...contractFilters, q: e.target.value })}
+                placeholder="Contract number, customer, title..."
+              />
+            </label>
+
+            <label>
+              Status
+              <select
+                value={contractFilters.status}
+                onChange={(e) => setContractFilters({ ...contractFilters, status: e.target.value })}
+              >
+                <option value="All">All Statuses</option>
+                <option value="Draft">Draft</option>
+                <option value="Sent">Sent</option>
+                <option value="Signed">Signed</option>
+                <option value="Completed/Billable">Completed/Billable</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+            </label>
+
+            <label>
+              Sort By
+              <select
+                value={contractFilters.sortBy}
+                onChange={(e) => setContractFilters({ ...contractFilters, sortBy: e.target.value })}
+              >
+                <option value="date">Date</option>
+                <option value="status">Status</option>
+                <option value="name">Customer/Name</option>
+                <option value="amount">Amount</option>
+              </select>
+            </label>
+
+            <label>
+              Direction
+              <select
+                value={contractFilters.sortDirection}
+                onChange={(e) => setContractFilters({ ...contractFilters, sortDirection: e.target.value })}
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
+
+            <label>
+              From
+              <input
+                type="date"
+                value={contractFilters.from}
+                onChange={(e) => setContractFilters({ ...contractFilters, from: e.target.value })}
+              />
+            </label>
+
+            <label>
+              To
+              <input
+                type="date"
+                value={contractFilters.to}
+                onChange={(e) => setContractFilters({ ...contractFilters, to: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="note-actions-row">
+            <button type="button" onClick={loadContracts}>
+              Refresh Contracts
+            </button>
+
+            <button type="button" onClick={clearContractFilters} disabled={!hasContractFilters}>
+              Clear Contract Filters
+            </button>
+          </div>
+
+          <div className="stack-list compact-list quote-list">
+            {contracts.length === 0 ? (
+              <p className="muted-text">No contracts match the selected filters.</p>
+            ) : (
+              contracts.map((contract) => (
+                <div key={contract.id} className="stack-item quote-item">
+                  <div className="stack-item-header">
+                    <strong>{contract.contractNumber}</strong>
+                    <span className={`status-chip status-chip-${contract.status.toLowerCase().replace("/", "-")}`}>
+                      {contract.status}
+                    </span>
+                  </div>
+
+                  <div className="compact-content">
+                    {contract.title} · {contract.customerName}
+                  </div>
+
+                  <div className="muted-text compact-meta">
+                    {formatCurrency(contract.amount)} · Contract date {formatDate(contract.contractDateUtc)}
+                    {contract.quoteNumber ? ` · Quote ${contract.quoteNumber}` : ""}
+                    {contract.signedAtUtc ? ` · Signed ${formatDate(contract.signedAtUtc)}` : ""}
+                  </div>
+
+                  <div className="quote-status-row">
+                    <button type="button" onClick={() => openContractDocument(contract.id)}>
+                      View / Print
+                    </button>
+
+                    {isAdminOrOwner && (
+                      <>
+                        <button type="button" onClick={() => handleContractStatusUpdate(contract.id, "Sent")}>
+                          Sent
+                        </button>
+                        <button type="button" onClick={() => handleContractStatusUpdate(contract.id, "Signed")}>
+                          Sign
+                        </button>
+                        <button type="button" onClick={() => handleContractStatusUpdate(contract.id, "Completed/Billable")}>
+                          Billable
+                        </button>
+                        <button type="button" onClick={() => handleContractStatusUpdate(contract.id, "Cancelled")}>
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Create Contract</h2>
+            <span className="status-chip status-chip-active">Phase 11b</span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleContractSubmit}>
+            <div className="form-grid">
+              <label>
+                Customer
+                <select
+                  value={contractForm.customerId}
+                  onChange={(e) => setContractForm({ ...contractForm, customerId: e.target.value, quoteId: "" })}
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Linked Quote
+                <select
+                  value={contractForm.quoteId}
+                  onChange={(e) => setContractForm({ ...contractForm, quoteId: e.target.value })}
+                >
+                  <option value="">No linked quote</option>
+                  {quotes
+                    .filter((quote) => !contractForm.customerId || quote.customerId === contractForm.customerId)
+                    .map((quote) => (
+                      <option key={quote.id} value={quote.id}>
+                        {quote.quoteNumber} — {quote.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label>
+                Title
+                <input
+                  value={contractForm.title}
+                  onChange={(e) => setContractForm({ ...contractForm, title: e.target.value })}
+                  placeholder="Contract title"
+                />
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  value={contractForm.description}
+                  onChange={(e) => setContractForm({ ...contractForm, description: e.target.value })}
+                  placeholder="Contract terms or summary..."
+                  rows={3}
+                />
+              </label>
+
+              <label>
+                Amount
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={contractForm.amount}
+                  onChange={(e) => setContractForm({ ...contractForm, amount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </label>
+
+              <label>
+                Initial Status
+                <select
+                  value={contractForm.status}
+                  onChange={(e) => setContractForm({ ...contractForm, status: e.target.value })}
+                >
+                  <option value="Draft">Draft</option>
+                  <option value="Sent">Sent</option>
+                  <option value="Signed">Signed</option>
+                  <option value="Completed/Billable">Completed/Billable</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </label>
+            </div>
+
+            <button type="submit">Create Contract</button>
+          </form>
+        </section>
+      </section>
+
       {isAdminOrOwner && (
         <section className="layout-grid">
           {isOwner && (
@@ -2922,6 +3511,44 @@ function App() {
 
                     <div className="quote-status-row">
                       <button type="button" onClick={() => openQuoteDocument(quote.id)}>
+                        View / Print
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="stack-list compact-list">
+              <div className="section-header compact-header">
+                <h3>Customer Contracts</h3>
+                <span className="count-chip">{customerContracts.length}</span>
+              </div>
+
+              {customerContracts.length === 0 ? (
+                <p className="muted-text">No contracts for this customer yet.</p>
+              ) : (
+                customerContracts.map((contract) => (
+                  <div key={contract.id} className="stack-item quote-item">
+                    <div className="stack-item-header">
+                      <strong>{contract.contractNumber}</strong>
+                      <span className={`status-chip status-chip-${contract.status.toLowerCase().replace("/", "-")}`}>
+                        {contract.status}
+                      </span>
+                    </div>
+
+                    <div className="compact-content">
+                      {contract.title} · {formatCurrency(contract.amount)}
+                    </div>
+
+                    <div className="muted-text compact-meta">
+                      Contract date {formatDate(contract.contractDateUtc)}
+                      {contract.quoteNumber ? ` · Quote ${contract.quoteNumber}` : ""}
+                      {contract.signedAtUtc ? ` · Signed ${formatDate(contract.signedAtUtc)}` : ""}
+                    </div>
+
+                    <div className="quote-status-row">
+                      <button type="button" onClick={() => openContractDocument(contract.id)}>
                         View / Print
                       </button>
                     </div>

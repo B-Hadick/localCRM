@@ -1115,6 +1115,378 @@ app.MapPost("/quotes/{quoteId:guid}/status", async (
     return Results.Ok(ToQuoteResponse(quote, customer.Name));
 }).RequireAuthorization("AdminOrOwner");
 
+
+app.MapGet("/contracts", async (
+    string? q,
+    string? status,
+    string? sortBy,
+    string? sortDirection,
+    Guid? customerId,
+    Guid? quoteId,
+    DateTime? from,
+    DateTime? to,
+    LocalCrmDbContext db) =>
+{
+    var query = db.Contracts.AsQueryable();
+
+    if (customerId.HasValue)
+    {
+        query = query.Where(contract => contract.CustomerId == customerId.Value);
+    }
+
+    if (quoteId.HasValue)
+    {
+        query = query.Where(contract => contract.QuoteId == quoteId.Value);
+    }
+
+    if (!string.IsNullOrWhiteSpace(status) && status != "All")
+    {
+        query = query.Where(contract => contract.Status == status);
+    }
+
+    if (from.HasValue)
+    {
+        var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        query = query.Where(contract => contract.ContractDateUtc >= fromUtc);
+    }
+
+    if (to.HasValue)
+    {
+        var toUtcExclusive = DateTime.SpecifyKind(to.Value.Date.AddDays(1), DateTimeKind.Utc);
+        query = query.Where(contract => contract.ContractDateUtc < toUtcExclusive);
+    }
+
+    var contractRows = await query.ToListAsync();
+
+    var customerIds = contractRows
+        .Select(contract => contract.CustomerId)
+        .Distinct()
+        .ToList();
+
+    var quoteIds = contractRows
+        .Where(contract => contract.QuoteId.HasValue)
+        .Select(contract => contract.QuoteId!.Value)
+        .Distinct()
+        .ToList();
+
+    var customers = await db.Customers
+        .Where(customer => customerIds.Contains(customer.Id))
+        .ToDictionaryAsync(customer => customer.Id);
+
+    var quotes = await db.Quotes
+        .Where(quote => quoteIds.Contains(quote.Id))
+        .ToDictionaryAsync(quote => quote.Id);
+
+    var responses = contractRows
+        .Select(contract =>
+        {
+            customers.TryGetValue(contract.CustomerId, out var customer);
+
+            Quote? quote = null;
+            if (contract.QuoteId.HasValue)
+            {
+                quotes.TryGetValue(contract.QuoteId.Value, out quote);
+            }
+
+            return ToContractResponse(
+                contract,
+                customer?.Name ?? "Unknown Customer",
+                quote?.QuoteNumber ?? ""
+            );
+        })
+        .ToList();
+
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        var search = q.Trim().ToLower();
+
+        responses = responses
+            .Where(contract =>
+                contract.CustomerName.ToLower().Contains(search) ||
+                contract.ContractNumber.ToLower().Contains(search) ||
+                contract.Title.ToLower().Contains(search) ||
+                contract.Description.ToLower().Contains(search) ||
+                contract.QuoteNumber.ToLower().Contains(search))
+            .ToList();
+    }
+
+    var descending = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase);
+
+    responses = (sortBy ?? "date").Trim().ToLowerInvariant() switch
+    {
+        "status" => descending
+            ? responses.OrderByDescending(contract => contract.Status).ThenByDescending(contract => contract.ContractDateUtc).ToList()
+            : responses.OrderBy(contract => contract.Status).ThenByDescending(contract => contract.ContractDateUtc).ToList(),
+
+        "name" or "customer" => descending
+            ? responses.OrderByDescending(contract => contract.CustomerName).ThenByDescending(contract => contract.ContractDateUtc).ToList()
+            : responses.OrderBy(contract => contract.CustomerName).ThenByDescending(contract => contract.ContractDateUtc).ToList(),
+
+        "amount" => descending
+            ? responses.OrderByDescending(contract => contract.Amount).ThenByDescending(contract => contract.ContractDateUtc).ToList()
+            : responses.OrderBy(contract => contract.Amount).ThenByDescending(contract => contract.ContractDateUtc).ToList(),
+
+        _ => descending
+            ? responses.OrderByDescending(contract => contract.ContractDateUtc).ToList()
+            : responses.OrderBy(contract => contract.ContractDateUtc).ToList()
+    };
+
+    return Results.Ok(responses.Take(250).ToList());
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/customers/{customerId:guid}/contracts", async (
+    Guid customerId,
+    LocalCrmDbContext db) =>
+{
+    var customer = await db.Customers.FindAsync(customerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var contractRows = await db.Contracts
+        .Where(contract => contract.CustomerId == customerId)
+        .OrderByDescending(contract => contract.ContractDateUtc)
+        .Take(100)
+        .ToListAsync();
+
+    var quoteIds = contractRows
+        .Where(contract => contract.QuoteId.HasValue)
+        .Select(contract => contract.QuoteId!.Value)
+        .Distinct()
+        .ToList();
+
+    var quotes = await db.Quotes
+        .Where(quote => quoteIds.Contains(quote.Id))
+        .ToDictionaryAsync(quote => quote.Id);
+
+    var response = contractRows
+        .Select(contract =>
+        {
+            Quote? quote = null;
+            if (contract.QuoteId.HasValue)
+            {
+                quotes.TryGetValue(contract.QuoteId.Value, out quote);
+            }
+
+            return ToContractResponse(contract, customer.Name, quote?.QuoteNumber ?? "");
+        })
+        .ToList();
+
+    return Results.Ok(response);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/contracts", async (
+    CreateContractRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var validationError = ValidateContractInput(input);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var customer = await db.Customers.FindAsync(input.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (input.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(input.QuoteId.Value);
+        if (quote is null)
+        {
+            return Results.NotFound(new { error = "Linked quote not found" });
+        }
+
+        if (quote.CustomerId != input.CustomerId)
+        {
+            return Results.BadRequest(new { error = "Linked quote must belong to the selected customer" });
+        }
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var status = string.IsNullOrWhiteSpace(input.Status)
+        ? "Draft"
+        : input.Status.Trim();
+
+    if (!IsValidContractStatus(status))
+    {
+        return Results.BadRequest(new { error = "Contract status must be Draft, Sent, Signed, Completed/Billable, or Cancelled" });
+    }
+
+    var contract = new Contract
+    {
+        Id = Guid.NewGuid(),
+        CustomerId = input.CustomerId,
+        QuoteId = input.QuoteId,
+        ScopeOfWorkId = input.ScopeOfWorkId,
+        ContractNumber = await GenerateContractNumberAsync(db, nowUtc),
+        Title = input.Title.Trim(),
+        Description = input.Description.Trim(),
+        Amount = input.Amount,
+        Status = status,
+        ContractDateUtc = nowUtc,
+        SentAtUtc = status == "Sent" ? nowUtc : null,
+        SignedAtUtc = status == "Signed" ? nowUtc : null,
+        CompletedBillableAtUtc = status == "Completed/Billable" ? nowUtc : null,
+        CancelledAtUtc = status == "Cancelled" ? nowUtc : null,
+        CreatedAtUtc = nowUtc,
+        UpdatedAtUtc = nowUtc
+    };
+
+    db.Contracts.Add(contract);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Contract",
+        EntityId = contract.Id.ToString(),
+        Action = "ContractCreated",
+        Details = quote is null
+            ? $"Contract '{contract.ContractNumber}' created for customer '{customer.Name}'."
+            : $"Contract '{contract.ContractNumber}' created for customer '{customer.Name}' from quote '{quote.QuoteNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Contract {ContractNumber} created for customer {CustomerId} by {PerformedBy}", contract.ContractNumber, customer.Id, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/contracts/{contract.Id}", ToContractResponse(contract, customer.Name, quote?.QuoteNumber ?? ""));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/contracts/{contractId:guid}/document", async (
+    Guid contractId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var contract = await db.Contracts.FindAsync(contractId);
+    if (contract is null)
+    {
+        return Results.NotFound(new { error = "Contract not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(contract.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (contract.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(contract.QuoteId.Value);
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var html = BuildContractDocumentHtml(contract, customer, quote, nowUtc);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Contract",
+        EntityId = contract.Id.ToString(),
+        Action = "ContractDocumentGenerated",
+        Details = $"Printable document generated for contract '{contract.ContractNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Contract document generated for {ContractNumber} by {PerformedBy}", contract.ContractNumber, performedBy);
+
+    return Results.Content(html, "text/html; charset=utf-8");
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/contracts/{contractId:guid}/status", async (
+    Guid contractId,
+    UpdateContractStatusRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var nowUtc = DateTime.UtcNow;
+
+    var contract = await db.Contracts.FindAsync(contractId);
+    if (contract is null)
+    {
+        return Results.NotFound(new { error = "Contract not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(contract.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (contract.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(contract.QuoteId.Value);
+    }
+
+    var status = input.Status.Trim();
+    if (!IsValidContractStatus(status))
+    {
+        return Results.BadRequest(new { error = "Contract status must be Draft, Sent, Signed, Completed/Billable, or Cancelled" });
+    }
+
+    var previousStatus = contract.Status;
+
+    contract.Status = status;
+    contract.UpdatedAtUtc = nowUtc;
+
+    if (status == "Sent" && contract.SentAtUtc is null)
+    {
+        contract.SentAtUtc = nowUtc;
+    }
+
+    if (status == "Signed")
+    {
+        contract.SignedAtUtc = nowUtc;
+    }
+
+    if (status == "Completed/Billable")
+    {
+        contract.CompletedBillableAtUtc = nowUtc;
+    }
+
+    if (status == "Cancelled")
+    {
+        contract.CancelledAtUtc = nowUtc;
+    }
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Contract",
+        EntityId = contract.Id.ToString(),
+        Action = "ContractStatusChanged",
+        Details = $"Contract '{contract.ContractNumber}' status changed from '{previousStatus}' to '{contract.Status}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    logger.LogInformation("Contract {ContractNumber} status changed from {PreviousStatus} to {Status} by {PerformedBy}", contract.ContractNumber, previousStatus, contract.Status, performedBy);
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(ToContractResponse(contract, customer.Name, quote?.QuoteNumber ?? ""));
+}).RequireAuthorization("AdminOrOwner");
+
 app.MapGet("/customer-edit-requests", async (
     string? status,
     string? requestedBy,
@@ -1400,6 +1772,374 @@ app.MapGet("/audit", async (
 
 app.Run();
 
+
+
+static string BuildContractDocumentHtml(Contract contract, Customer customer, Quote? quote, DateTime generatedAtUtc)
+{
+    var customerAddress = string.Join(", ", new[]
+        {
+            customer.AddressLine1,
+            customer.AddressLine2,
+            customer.City,
+            customer.State,
+            customer.PostalCode
+        }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    var statusDates = new List<string>();
+
+    if (contract.SentAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Sent:</strong> {FormatDateForDocument(contract.SentAtUtc.Value)}</div>");
+    }
+
+    if (contract.SignedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Signed:</strong> {FormatDateForDocument(contract.SignedAtUtc.Value)}</div>");
+    }
+
+    if (contract.CompletedBillableAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Completed/Billable:</strong> {FormatDateForDocument(contract.CompletedBillableAtUtc.Value)}</div>");
+    }
+
+    if (contract.CancelledAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Cancelled:</strong> {FormatDateForDocument(contract.CancelledAtUtc.Value)}</div>");
+    }
+
+    var encodedDescription = EncodeHtml(contract.Description).Replace("\n", "<br />");
+    var statusDatesHtml = statusDates.Count == 0
+        ? "<div class=\"muted\">No status dates recorded.</div>"
+        : string.Join("\n        ", statusDates);
+
+    var linkedQuoteHtml = quote is null
+        ? "<div class=\"muted\">No linked quote.</div>"
+        : $"<div><strong>Linked Quote:</strong> {EncodeHtml(quote.QuoteNumber)}</div><div><strong>Quote Status:</strong> {EncodeHtml(quote.Status)}</div>";
+
+    return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Contract {{EncodeHtml(contract.ContractNumber)}}</title>
+  <style>
+    :root {
+      color: #1f2933;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    body {
+      margin: 0;
+      background: #f4f6f8;
+    }
+
+    .page {
+      max-width: 850px;
+      margin: 0 auto;
+      padding: 32px;
+      background: white;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 2px solid #1f2933;
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      letter-spacing: 0.04em;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #52606d;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border: 1px solid #bcccdc;
+      border-radius: 999px;
+      background: #e8f1fb;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+
+    .box {
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 16px;
+      background: #f8fafc;
+    }
+
+    .contract-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .description {
+      line-height: 1.5;
+      min-height: 110px;
+      white-space: normal;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #334e68;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .amount {
+      text-align: right;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .signature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-top: 44px;
+    }
+
+    .signature-line {
+      border-top: 1px solid #1f2933;
+      padding-top: 8px;
+      color: #52606d;
+      font-size: 12px;
+    }
+
+    .footer {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid #d9e2ec;
+      color: #52606d;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #1f2933;
+      color: white;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+        min-height: auto;
+      }
+
+      .actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="actions">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+
+    <section class="topbar">
+      <div>
+        <h1>CONTRACT</h1>
+        <div class="muted">LocalCRM</div>
+      </div>
+
+      <div>
+        <div><strong>Contract #:</strong> {{EncodeHtml(contract.ContractNumber)}}</div>
+        <div><strong>Status:</strong> <span class="badge">{{EncodeHtml(contract.Status)}}</span></div>
+        <div><strong>Contract Date:</strong> {{FormatDateForDocument(contract.ContractDateUtc)}}</div>
+        <div><strong>Generated:</strong> {{FormatDateForDocument(generatedAtUtc)}}</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="box">
+        <h2>Customer</h2>
+        <div><strong>{{EncodeHtml(customer.Name)}}</strong></div>
+        <div>{{EncodeHtml(customer.Type)}}</div>
+        <div>{{EncodeHtml(customer.Email)}}</div>
+        <div>{{EncodeHtml(customer.Phone)}}</div>
+        <div>{{EncodeHtml(customerAddress)}}</div>
+      </div>
+
+      <div class="box">
+        <h2>Contract Links</h2>
+        {{linkedQuoteHtml}}
+        <div><strong>Scope of Work ID:</strong> {{EncodeHtml(contract.ScopeOfWorkId?.ToString() ?? "Not linked")}}</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="box">
+        <h2>Status Dates</h2>
+        {{statusDatesHtml}}
+      </div>
+
+      <div class="box">
+        <h2>Contract Amount</h2>
+        <div class="amount">{{FormatCurrencyForDocument(contract.Amount)}}</div>
+      </div>
+    </section>
+
+    <section class="box">
+      <div class="contract-title">{{EncodeHtml(contract.Title)}}</div>
+      <div class="description">{{encodedDescription}}</div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th style="text-align:right;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{EncodeHtml(contract.Title)}}</td>
+          <td class="amount">{{FormatCurrencyForDocument(contract.Amount)}}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="signature-grid">
+      <div class="signature-line">Authorized Representative / Date</div>
+      <div class="signature-line">Customer Signature / Date</div>
+    </section>
+
+    <section class="footer">
+      <div>This document was generated from LocalCRM contract record {{EncodeHtml(contract.Id.ToString())}}.</div>
+      <div>Use the browser print dialog to print a hard copy or save as PDF.</div>
+    </section>
+  </main>
+</body>
+</html>
+""";
+}
+
+static async Task<string> GenerateContractNumberAsync(LocalCrmDbContext db, DateTime nowUtc)
+{
+    var prefix = $"C-{nowUtc:yyyyMMdd}";
+    var countForDay = await db.Contracts.CountAsync(contract => contract.ContractNumber.StartsWith(prefix));
+    return $"{prefix}-{countForDay + 1:0000}";
+}
+
+static ContractListResponse ToContractResponse(Contract contract, string customerName, string quoteNumber)
+{
+    return new ContractListResponse(
+        contract.Id,
+        contract.CustomerId,
+        customerName,
+        contract.QuoteId,
+        quoteNumber,
+        contract.ScopeOfWorkId,
+        contract.ContractNumber,
+        contract.Title,
+        contract.Description,
+        contract.Amount,
+        contract.Status,
+        contract.ContractDateUtc,
+        contract.SentAtUtc,
+        contract.SignedAtUtc,
+        contract.CompletedBillableAtUtc,
+        contract.CancelledAtUtc,
+        contract.CreatedAtUtc,
+        contract.UpdatedAtUtc
+    );
+}
+
+static string ValidateContractInput(CreateContractRequest input)
+{
+    if (input.CustomerId == Guid.Empty)
+    {
+        return "Customer is required";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Title))
+    {
+        return "Contract title is required";
+    }
+
+    if (input.Title.Trim().Length < 2)
+    {
+        return "Contract title must be at least 2 characters";
+    }
+
+    if (input.Amount < 0)
+    {
+        return "Contract amount cannot be negative";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Status) && !IsValidContractStatus(input.Status.Trim()))
+    {
+        return "Contract status must be Draft, Sent, Signed, Completed/Billable, or Cancelled";
+    }
+
+    return "";
+}
+
+static bool IsValidContractStatus(string status)
+{
+    return status == "Draft" ||
+        status == "Sent" ||
+        status == "Signed" ||
+        status == "Completed/Billable" ||
+        status == "Cancelled";
+}
 
 static string BuildQuoteDocumentHtml(Quote quote, Customer customer, DateTime generatedAtUtc)
 {
@@ -2013,6 +2753,42 @@ static bool IsValidEmail(string email)
 {
     return email.Contains('@') && email.Contains('.');
 }
+
+
+public record CreateContractRequest(
+    Guid CustomerId,
+    Guid? QuoteId,
+    Guid? ScopeOfWorkId,
+    string Title,
+    string Description,
+    decimal Amount,
+    string Status
+);
+
+public record UpdateContractStatusRequest(
+    string Status
+);
+
+public record ContractListResponse(
+    Guid Id,
+    Guid CustomerId,
+    string CustomerName,
+    Guid? QuoteId,
+    string QuoteNumber,
+    Guid? ScopeOfWorkId,
+    string ContractNumber,
+    string Title,
+    string Description,
+    decimal Amount,
+    string Status,
+    DateTime ContractDateUtc,
+    DateTime? SentAtUtc,
+    DateTime? SignedAtUtc,
+    DateTime? CompletedBillableAtUtc,
+    DateTime? CancelledAtUtc,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc
+);
 
 public record CreateQuoteRequest(
     Guid CustomerId,
