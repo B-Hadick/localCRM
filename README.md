@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, quote document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 ---
 🚀 Tech Stack
 Backend
@@ -16,6 +16,8 @@ Role-aware backend workflow enforcement
 Staff-to-Admin approval workflow
 Quote record workflow
 Quote status workflow
+Printable quote document workflow
+Browser-printable HTML document generation
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -24,7 +26,7 @@ Password hashing with ASP.NET Core Identity password hasher
 Authenticated password change workflow
 Admin/Owner Staff password reset workflow
 Owner-only Admin user creation workflow
-Security-sensitive audit events for login, password changes/resets, user creation, and quote activity
+Security-sensitive audit events for login, password changes/resets, user creation, quote activity, and quote document generation
 Structured console logging
 JSON error handling middleware
 Frontend
@@ -41,6 +43,8 @@ Quote creation workflow
 Quote list/search/filter/sort workflow
 Quote status controls
 Customer-specific quote history
+Quote View / Print workflow
+Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
 Edit request status/requester/date filtering
@@ -97,18 +101,21 @@ Owner users can reset Staff passwords
 Owner users can create, edit, and review customer workflows
 Owner users can review global audit activity
 Owner users can create quotes and manage quote statuses
+Owner users can view and print quote documents
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
 Admin users can reset Staff passwords
 Admin users can review global audit activity
 Admin users can create quotes and manage quote statuses
+Admin users can view and print quote documents
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
 Staff users can view customer notes and customer-specific audit activity
 Staff users can create quotes
 Staff users can view quote records
+Staff users can view and print quote documents
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
 Staff users cannot manage quote status transitions
@@ -180,7 +187,30 @@ Sent quotes are automatically marked expired after 30 days if not otherwise upda
 Quote creation is audit logged
 Quote status changes are audit logged
 Automatic quote expiration is audit logged
-DOCX/PDF import/export and physical printing are planned for the next quote/document layer
+Quote Documents
+Generate printable quote documents from database-backed quote records
+View/print quote documents from the global Quotes panel
+View/print quote documents from the Customer Quotes section
+Printable quote document includes:
+Quote number
+Quote status
+Quote date
+Generated date
+Customer name
+Customer type
+Customer email
+Customer phone
+Customer address
+Quote title
+Quote description
+Quote amount
+Sent/accepted/rejected/expired dates when available
+Built-in `Print / Save as PDF` button inside the quote document
+Browser print supports physical hard-copy printing
+Browser print dialog supports local “Save as PDF”
+Quote document generation is audit logged
+Printable quote document output uses safe HTML encoding for customer and quote fields
+Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -213,6 +243,7 @@ Audit entries for failed login attempts
 Audit entries for quote creation
 Audit entries for quote status changes
 Audit entries for automatic quote expiration
+Audit entries for printable quote document generation
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -240,6 +271,7 @@ Edit request status/requester/date filtering
 Quote form state
 Quote filter/sort state
 Quote status action state
+Quote document opening state
 Customer quote history state
 Account security form state
 Staff password reset form state
@@ -275,6 +307,7 @@ Quotes
 `GET /quotes?q=&status=&sortBy=&sortDirection=&customerId=&from=&to=`
 `GET /customers/{customerId}/quotes`
 `POST /quotes`
+`GET /quotes/{quoteId}/document`
 `POST /quotes/{quoteId}/status`
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
@@ -303,6 +336,7 @@ Require a valid JWT bearer token:
 `GET /quotes?q=&status=&sortBy=&sortDirection=&customerId=&from=&to=`
 `GET /customers/{customerId}/quotes`
 `POST /quotes`
+`GET /quotes/{quoteId}/document`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -335,6 +369,9 @@ Customer workflow modeling
 Quote workflow modeling
 Quote status lifecycle handling
 Automatic expiration logic
+Printable document generation from database records
+Browser-based hard-copy printing workflow
+Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
 Current-vs-requested approval review patterns
 Dashboard summary/reporting endpoint design
@@ -774,6 +811,52 @@ Confirm quote status changes are audit logged.
 Confirm `GET /quotes` returns `HTTP/1.1 200 OK`.
 Confirm customer-specific quote history returns the customer’s quotes.
 ---
+✅ Phase 11a+ — Completed
+Phase 11a+ added printable quote documents and browser-based quote printing/export.
+Implemented
+Printable quote document endpoint:
+`GET /quotes/{quoteId}/document`
+Printable HTML quote layout generated from database quote records
+Document includes:
+Quote number
+Quote status
+Quote date
+Generated date
+Customer name
+Customer type
+Customer email
+Customer phone
+Customer address
+Quote title
+Quote description
+Quote amount
+Sent/accepted/rejected/expired dates where available
+Built-in `Print / Save as PDF` button inside the generated quote document
+Browser-based hard-copy printing support
+Browser-based local “Save as PDF” support
+Frontend `View / Print` button in the global Quotes panel
+Frontend `View / Print` button in the Customer Quotes section
+Authenticated frontend quote document fetch
+Blob-based printable document opening in a new browser tab/window
+Quote document generation audit event:
+`QuoteDocumentGenerated`
+Safe HTML encoding for customer and quote fields
+Compile-safe C# raw string quote document template
+No database migration required
+No additional Vite proxy route required because `/quotes` was already proxied
+Verified Flow
+Sign in as Owner or Admin.
+Find an existing quote in the global Quotes panel.
+Click `View / Print`.
+Confirm the printable quote document opens in a new tab/window.
+Click `Print / Save as PDF` inside the generated document.
+Confirm the browser print dialog opens.
+Save as PDF or print a hard copy.
+Select the linked customer.
+Confirm the same quote can be opened from Customer Quotes.
+Confirm Audit Review shows `QuoteDocumentGenerated`.
+Confirm backend build succeeds after the raw string template fix.
+---
 ⚙️ Running the Project
 1. Start PostgreSQL
 From the repository root:
@@ -997,6 +1080,17 @@ curl -i -X POST http://localhost:8080/quotes/<QUOTE_ID>/status \
   -H "Authorization: Bearer $OWNER_TOKEN" \
   -d '{"status":"Sent"}'
 ```
+Generate Printable Quote Document
+Replace `<QUOTE_ID>` with an actual quote ID.
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/quotes/<QUOTE_ID>/document
+```
+Expected:
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -1114,19 +1208,21 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 11a+
-Quote DOCX/PDF import/export
-Quote physical hard-copy printing workflow
-Quote document template mapping
-Quote attachment/document storage strategy
 Phase 11b
 Contracts with DOCX/PDF import/export and physical hard-copy printing
 Link contracts to customers, quotes, and scope of work
 Mark contracts as `signed` or `completed/billable`
 Sort contracts by name, status, and date
+Phase 12
+Scope-of-work records with linking to customer/quote/contract
+DOCX/PDF import/export
+Physical hard-copy printing
+Phase 13
+Document templates for quotes, contracts, and scope-of-work
+Server-side DOCX/PDF generation
+Document template mapping
+Quote attachment/document storage strategy
 Later Phases
-Phase 12: Scope-of-work records with linking to customer/quote/contract, DOCX/PDF import/export, and physical hard-copy printing
-Phase 13: Document templates for quotes, contracts, scope-of-work
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
 Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
@@ -1138,7 +1234,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 11a complete — Database-backed quote records, quote creation, quote filtering/sorting, customer quote history, quote status workflow, quote auditing, and automatic sent-quote expiration are working.
+Phase 11a+ complete — Printable quote documents, browser-based hard-copy printing, browser Save-as-PDF workflow, quote document audit events, and frontend View / Print controls are working.
 ```
 ---
 👤 Author

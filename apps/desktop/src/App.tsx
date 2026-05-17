@@ -1595,6 +1595,43 @@ function App() {
     }
   }
 
+  async function openQuoteDocument(quoteId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before viewing quote documents.", "error");
+      return;
+    }
+
+    setStatus("Opening printable quote document...", "info");
+
+    try {
+      const response = await fetch(`/quotes/${quoteId}/document`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const html = await response.text();
+      const blob = new Blob([html], { type: "text/html" });
+      const documentUrl = URL.createObjectURL(blob);
+
+      window.open(documentUrl, "_blank", "noopener,noreferrer");
+      setStatus("Printable quote document opened.", "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to open quote document.", "error");
+    }
+  }
+
   async function handleQuoteStatusUpdate(quoteId: string, status: string) {
     if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin or Owner users can update quote status.", "error");
@@ -2413,6 +2450,9 @@ function App() {
 
                   {isAdminOrOwner && (
                     <div className="quote-status-row">
+                      <button type="button" onClick={() => openQuoteDocument(quote.id)}>
+                        View / Print
+                      </button>
                       <button type="button" onClick={() => handleQuoteStatusUpdate(quote.id, "Sent")}>
                         Sent
                       </button>
@@ -2878,6 +2918,12 @@ function App() {
                     <div className="muted-text compact-meta">
                       Quote date {formatDate(quote.quoteDateUtc)}
                       {quote.sentAtUtc ? ` · Sent ${formatDate(quote.sentAtUtc)}` : ""}
+                    </div>
+
+                    <div className="quote-status-row">
+                      <button type="button" onClick={() => openQuoteDocument(quote.id)}>
+                        View / Print
+                      </button>
                     </div>
                   </div>
                 ))

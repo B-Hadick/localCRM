@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Net;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
@@ -1001,6 +1002,48 @@ app.MapPost("/quotes", async (
     return Results.Created($"/quotes/{quote.Id}", ToQuoteResponse(quote, customer.Name));
 }).RequireAuthorization("AuthenticatedUser");
 
+
+app.MapGet("/quotes/{quoteId:guid}/document", async (
+    Guid quoteId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var quote = await db.Quotes.FindAsync(quoteId);
+    if (quote is null)
+    {
+        return Results.NotFound(new { error = "Quote not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(quote.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var html = BuildQuoteDocumentHtml(quote, customer, nowUtc);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "Quote",
+        EntityId = quote.Id.ToString(),
+        Action = "QuoteDocumentGenerated",
+        Details = $"Printable document generated for quote '{quote.QuoteNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Quote document generated for {QuoteNumber} by {PerformedBy}", quote.QuoteNumber, performedBy);
+
+    return Results.Content(html, "text/html; charset=utf-8");
+}).RequireAuthorization("AuthenticatedUser");
+
 app.MapPost("/quotes/{quoteId:guid}/status", async (
     Guid quoteId,
     UpdateQuoteStatusRequest input,
@@ -1356,6 +1399,283 @@ app.MapGet("/audit", async (
 }).RequireAuthorization("AdminOrOwner");
 
 app.Run();
+
+
+static string BuildQuoteDocumentHtml(Quote quote, Customer customer, DateTime generatedAtUtc)
+{
+    var customerAddress = string.Join(", ", new[]
+        {
+            customer.AddressLine1,
+            customer.AddressLine2,
+            customer.City,
+            customer.State,
+            customer.PostalCode
+        }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    var statusDates = new List<string>();
+
+    if (quote.SentAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Sent:</strong> {FormatDateForDocument(quote.SentAtUtc.Value)}</div>");
+    }
+
+    if (quote.AcceptedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Accepted:</strong> {FormatDateForDocument(quote.AcceptedAtUtc.Value)}</div>");
+    }
+
+    if (quote.RejectedAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Rejected:</strong> {FormatDateForDocument(quote.RejectedAtUtc.Value)}</div>");
+    }
+
+    if (quote.ExpiredAtUtc.HasValue)
+    {
+        statusDates.Add($"<div><strong>Expired:</strong> {FormatDateForDocument(quote.ExpiredAtUtc.Value)}</div>");
+    }
+
+    var encodedDescription = EncodeHtml(quote.Description).Replace("\n", "<br />");
+    var statusDatesHtml = statusDates.Count == 0
+        ? "<div class=\"muted\">No status dates recorded.</div>"
+        : string.Join("\n        ", statusDates);
+
+    return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Quote {{EncodeHtml(quote.QuoteNumber)}}</title>
+  <style>
+    :root {
+      color: #1f2933;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    body {
+      margin: 0;
+      background: #f4f6f8;
+    }
+
+    .page {
+      max-width: 850px;
+      margin: 0 auto;
+      padding: 32px;
+      background: white;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 2px solid #1f2933;
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      letter-spacing: 0.04em;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #52606d;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border: 1px solid #bcccdc;
+      border-radius: 999px;
+      background: #e8f1fb;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+
+    .box {
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 16px;
+      background: #f8fafc;
+    }
+
+    .quote-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .description {
+      line-height: 1.5;
+      min-height: 90px;
+      white-space: normal;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #334e68;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .amount {
+      text-align: right;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .footer {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid #d9e2ec;
+      color: #52606d;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #1f2933;
+      color: white;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+        min-height: auto;
+      }
+
+      .actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="actions">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+
+    <section class="topbar">
+      <div>
+        <h1>QUOTE</h1>
+        <div class="muted">LocalCRM</div>
+      </div>
+
+      <div>
+        <div><strong>Quote #:</strong> {{EncodeHtml(quote.QuoteNumber)}}</div>
+        <div><strong>Status:</strong> <span class="badge">{{EncodeHtml(quote.Status)}}</span></div>
+        <div><strong>Quote Date:</strong> {{FormatDateForDocument(quote.QuoteDateUtc)}}</div>
+        <div><strong>Generated:</strong> {{FormatDateForDocument(generatedAtUtc)}}</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="box">
+        <h2>Customer</h2>
+        <div><strong>{{EncodeHtml(customer.Name)}}</strong></div>
+        <div>{{EncodeHtml(customer.Type)}}</div>
+        <div>{{EncodeHtml(customer.Email)}}</div>
+        <div>{{EncodeHtml(customer.Phone)}}</div>
+        <div>{{EncodeHtml(customerAddress)}}</div>
+      </div>
+
+      <div class="box">
+        <h2>Status Dates</h2>
+        {{statusDatesHtml}}
+      </div>
+    </section>
+
+    <section class="box">
+      <div class="quote-title">{{EncodeHtml(quote.Title)}}</div>
+      <div class="description">{{encodedDescription}}</div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th style="text-align:right;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{EncodeHtml(quote.Title)}}</td>
+          <td class="amount">{{FormatCurrencyForDocument(quote.Amount)}}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="footer">
+      <div>This document was generated from LocalCRM quote record {{EncodeHtml(quote.Id.ToString())}}.</div>
+      <div>Use the browser print dialog to print a hard copy or save as PDF.</div>
+    </section>
+  </main>
+</body>
+</html>
+""";
+}
+
+static string EncodeHtml(string? value)
+{
+    return WebUtility.HtmlEncode(value ?? "");
+}
+
+static string FormatDateForDocument(DateTime value)
+{
+    return value.ToString("yyyy-MM-dd");
+}
+
+static string FormatCurrencyForDocument(decimal value)
+{
+    return value.ToString("C2", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+}
 
 static async Task ExpireOverdueQuotesAsync(LocalCrmDbContext db, DateTime nowUtc)
 {
