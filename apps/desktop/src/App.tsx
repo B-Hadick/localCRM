@@ -285,6 +285,10 @@ type DocumentTemplate = {
   name: string;
   documentType: string;
   contentHtml: string;
+  sourceFormat: string;
+  originalFileName: string;
+  originalContentType: string;
+  importedAtUtc: string | null;
   isDefault: boolean;
   isActive: boolean;
   createdAtUtc: string;
@@ -298,6 +302,14 @@ type DocumentTemplateForm = {
   contentHtml: string;
   isDefault: boolean;
   isActive: boolean;
+};
+
+type DocumentTemplateImportForm = {
+  name: string;
+  documentType: string;
+  isDefault: boolean;
+  contentHtml: string;
+  file: File | null;
 };
 
 const emptyCustomerForm: CustomerForm = {
@@ -413,6 +425,14 @@ const emptyDocumentTemplateForm: DocumentTemplateForm = {
   isActive: true
 };
 
+const emptyDocumentTemplateImportForm: DocumentTemplateImportForm = {
+  name: "",
+  documentType: "Quote",
+  isDefault: false,
+  contentHtml: "",
+  file: null
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -485,6 +505,8 @@ function App() {
   const [contractForm, setContractForm] = useState<ContractForm>(emptyContractForm);
   const [scopeOfWorkForm, setScopeOfWorkForm] = useState<ScopeOfWorkForm>(emptyScopeOfWorkForm);
   const [documentTemplateForm, setDocumentTemplateForm] = useState<DocumentTemplateForm>(emptyDocumentTemplateForm);
+  const [documentTemplateImportForm, setDocumentTemplateImportForm] =
+    useState<DocumentTemplateImportForm>(emptyDocumentTemplateImportForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -716,6 +738,40 @@ function App() {
     return "";
   }
 
+  function validateDocumentTemplateImportForm(input: DocumentTemplateImportForm) {
+    const name = input.name.trim();
+
+    if (!name) {
+      return "Imported template name is required.";
+    }
+
+    if (name.length < 2) {
+      return "Imported template name must be at least 2 characters.";
+    }
+
+    if (!["Quote", "Contract", "ScopeOfWork"].includes(input.documentType)) {
+      return "Document type must be Quote, Contract, or ScopeOfWork.";
+    }
+
+    if (!input.file) {
+      return "Select a DOCX file to import.";
+    }
+
+    if (!input.file.name.toLowerCase().endsWith(".docx")) {
+      return "Only .docx files can be imported.";
+    }
+
+    if (input.file.size > 10 * 1024 * 1024) {
+      return "Imported template file cannot exceed 10 MB.";
+    }
+
+    if (input.contentHtml.length > 20000) {
+      return "Fallback HTML content cannot exceed 20000 characters.";
+    }
+
+    return "";
+  }
+
   function validateScopeOfWorkForm(input: ScopeOfWorkForm) {
     if (!input.customerId) {
       return "Select a customer before creating a scope of work.";
@@ -909,6 +965,7 @@ function App() {
     setStaffUserForm(emptyStaffUserForm);
     setAdminUserForm(emptyAdminUserForm);
     setDocumentTemplateForm(emptyDocumentTemplateForm);
+    setDocumentTemplateImportForm(emptyDocumentTemplateImportForm);
     setDocumentTemplateTypeFilter("All");
     setStatus(message, "error");
   }
@@ -1021,6 +1078,7 @@ function App() {
     setStaffUserForm(emptyStaffUserForm);
     setAdminUserForm(emptyAdminUserForm);
     setDocumentTemplateForm(emptyDocumentTemplateForm);
+    setDocumentTemplateImportForm(emptyDocumentTemplateImportForm);
     setDocumentTemplateTypeFilter("All");
     setStatus("Signed out.", "info");
   }
@@ -2698,6 +2756,117 @@ function App() {
     }
   }
 
+  async function exportDocumentTemplate(template: DocumentTemplate) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can export document templates.", "error");
+      return;
+    }
+
+    setStatus(`Exporting template "${template.name}"...`, "info");
+
+    try {
+      const response = await fetch(`/document-templates/${template.id}/export`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      const contentDisposition = response.headers.get("content-disposition") ?? "";
+      const filenameMatch = contentDisposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+      const fallbackExtension = template.sourceFormat === "Docx" ? "docx" : "html";
+      const fallbackFileName =
+        template.originalFileName || `${template.name.replace(/[^a-z0-9-_]+/gi, "-")}.${fallbackExtension}`;
+      const fileName = filenameMatch
+        ? decodeURIComponent(filenameMatch[1].replace(/"/g, ""))
+        : fallbackFileName;
+
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+
+      setStatus(`Template "${template.name}" exported.`, "success");
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to export document template.", "error");
+    }
+  }
+
+  async function handleDocumentTemplateImportSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can import document templates.", "error");
+      return;
+    }
+
+    const validationError = validateDocumentTemplateImportForm(documentTemplateImportForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Importing DOCX document template...", "info");
+
+    try {
+      const formData = new FormData();
+      formData.append("name", documentTemplateImportForm.name.trim());
+      formData.append("documentType", documentTemplateImportForm.documentType);
+      formData.append("isDefault", String(documentTemplateImportForm.isDefault));
+      formData.append("contentHtml", documentTemplateImportForm.contentHtml.trim());
+
+      if (documentTemplateImportForm.file) {
+        formData.append("file", documentTemplateImportForm.file);
+      }
+
+      const response = await fetch("/document-templates/import", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: formData
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const importedTemplate = (await response.json()) as DocumentTemplate;
+
+      setDocumentTemplateImportForm(emptyDocumentTemplateImportForm);
+      setStatus(`DOCX template "${importedTemplate.name}" imported successfully.`, "success");
+      await loadDocumentTemplates();
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to import DOCX template.", "error");
+    }
+  }
+
   async function handleAdminUserSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -3105,17 +3274,23 @@ function App() {
                     </div>
 
                     <div className="compact-content">
-                      {template.documentType}
+                      {template.documentType} · {template.sourceFormat || "Html"}
                       {template.isDefault ? " · Default" : ""}
+                      {template.originalFileName ? ` · ${template.originalFileName}` : ""}
                     </div>
 
                     <div className="muted-text compact-meta">
                       Updated {formatDate(template.updatedAtUtc)}
+                      {template.importedAtUtc ? ` · Imported ${formatDate(template.importedAtUtc)}` : ""}
                     </div>
 
                     <div className="quote-status-row">
                       <button type="button" onClick={() => editDocumentTemplate(template)}>
                         Edit
+                      </button>
+
+                      <button type="button" onClick={() => exportDocumentTemplate(template)}>
+                        Export
                       </button>
 
                       <button
@@ -3137,6 +3312,102 @@ function App() {
                 ))
               )}
             </div>
+          </section>
+
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Import DOCX Template</h2>
+              <span className="status-chip status-chip-active">Phase 13c</span>
+            </div>
+
+            <form className="customer-form" onSubmit={handleDocumentTemplateImportSubmit}>
+              <div className="form-grid">
+                <label>
+                  Template Name
+                  <input
+                    value={documentTemplateImportForm.name}
+                    onChange={(e) =>
+                      setDocumentTemplateImportForm({ ...documentTemplateImportForm, name: e.target.value })
+                    }
+                    placeholder="Imported Quote Template"
+                  />
+                </label>
+
+                <label>
+                  Document Type
+                  <select
+                    value={documentTemplateImportForm.documentType}
+                    onChange={(e) =>
+                      setDocumentTemplateImportForm({
+                        ...documentTemplateImportForm,
+                        documentType: e.target.value
+                      })
+                    }
+                  >
+                    <option value="Quote">Quote</option>
+                    <option value="Contract">Contract</option>
+                    <option value="ScopeOfWork">Scope of Work</option>
+                  </select>
+                </label>
+
+                <label>
+                  Set as Default
+                  <select
+                    value={documentTemplateImportForm.isDefault ? "true" : "false"}
+                    onChange={(e) =>
+                      setDocumentTemplateImportForm({
+                        ...documentTemplateImportForm,
+                        isDefault: e.target.value === "true"
+                      })
+                    }
+                  >
+                    <option value="false">No</option>
+                    <option value="true">Yes</option>
+                  </select>
+                </label>
+
+                <label>
+                  DOCX File
+                  <input
+                    type="file"
+                    accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(e) =>
+                      setDocumentTemplateImportForm({
+                        ...documentTemplateImportForm,
+                        file: e.target.files?.[0] ?? null
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <label>
+                Optional Fallback HTML
+                <textarea
+                  value={documentTemplateImportForm.contentHtml}
+                  onChange={(e) =>
+                    setDocumentTemplateImportForm({
+                      ...documentTemplateImportForm,
+                      contentHtml: e.target.value
+                    })
+                  }
+                  placeholder="<section><h1>{{Title}}</h1></section>"
+                  rows={5}
+                />
+              </label>
+
+              <div className="auth-hint">
+                The original DOCX file is stored for export. Full DOCX rendering from CRM records is planned for the next document generation layer.
+              </div>
+
+              <div className="note-actions-row">
+                <button type="submit">Import DOCX Template</button>
+
+                <button type="button" onClick={() => setDocumentTemplateImportForm(emptyDocumentTemplateImportForm)}>
+                  Clear Import
+                </button>
+              </div>
+            </form>
           </section>
 
           <section className="card">

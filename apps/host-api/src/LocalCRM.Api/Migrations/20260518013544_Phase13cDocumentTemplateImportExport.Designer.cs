@@ -3,6 +3,7 @@ using System;
 using LocalCRM.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LocalCRM.Api.Migrations
 {
     [DbContext(typeof(LocalCrmDbContext))]
-    partial class LocalCrmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260518013544_Phase13cDocumentTemplateImportExport")]
+    partial class Phase13cDocumentTemplateImportExport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

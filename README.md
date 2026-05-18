@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -25,6 +25,8 @@ Printable quote document workflow
 Printable contract document workflow
 Printable scope-of-work document workflow
 Document-template storage and management
+DOCX template import/export foundation
+Original template file storage and export
 Template-backed printable document rendering
 Placeholder token replacement for generated documents
 Browser-printable HTML document generation
@@ -65,7 +67,7 @@ Scope-of-work status controls
 Customer-specific scope-of-work history
 Scope-of-work View / Print workflow
 Admin/Owner document-template management panel
-Template seeding, editing, activation/deactivation, and default selection
+Template seeding, editing, activation/deactivation, default selection, DOCX import, and template export
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -127,6 +129,8 @@ Owner users can create contracts and manage contract statuses
 Owner users can view and print contract documents
 Owner users can create scopes of work and manage scope-of-work statuses
 Owner users can view and print scope-of-work documents
+Owner users can manage document templates
+Owner users can import and export document templates
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -138,6 +142,8 @@ Admin users can create contracts and manage contract statuses
 Admin users can view and print contract documents
 Admin users can create scopes of work and manage scope-of-work statuses
 Admin users can view and print scope-of-work documents
+Admin users can manage document templates
+Admin users can import and export document templates
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -165,6 +171,7 @@ Backend enforces Admin/Owner-only global audit review
 Backend enforces Admin/Owner-only quote status updates
 Backend enforces Admin/Owner-only contract status updates
 Backend enforces Admin/Owner-only scope-of-work status updates
+Backend enforces Admin/Owner-only document-template import/export
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -359,18 +366,24 @@ Template-backed scope-of-work document output uses safe placeholder replacement 
 Hardcoded printable scope-of-work document layout remains available as fallback
 Document Template Management
 Create reusable document templates for Quote, Contract, and ScopeOfWork documents
-Store template name, document type, HTML template content, active state, and default state
+Store template name, document type, HTML template content, source format, original filename, original content type, original file bytes, imported timestamp, active state, and default state
 Seed default document templates for Quote, Contract, and ScopeOfWork
 Filter templates by document type
 Edit existing document templates
 Set active templates as the default for their document type
 Activate and deactivate templates
+Import DOCX templates created in Word or compatible editors
+Store the original imported DOCX file for later export and later server-side rendering work
+Export HTML-created templates as `.html`
+Export DOCX-imported templates as the original `.docx`
+Track template source format as `Html` or `Docx`
+Track original imported filename and imported timestamp
 Deactivate action clears default state for that template
 Admin/Owner-only template management UI
 Admin/Owner-only template management API
-Audit trail records template creation, update, default selection, activation, deactivation, and seeding
-Current template content is stored as HTML as the Phase 13 internal rendering foundation
-DOCX import/export remains planned for the later template import/export layer
+Audit trail records template creation, update, default selection, activation, deactivation, seeding, import, and export
+Current HTML template content remains the Phase 13 internal rendering foundation
+DOCX import/export foundation is implemented; full DOCX-to-record rendering remains planned for the later document generation layer
 Template-backed Document Rendering
 Quote documents use active/default Quote templates when available
 Contract documents use active/default Contract templates when available
@@ -467,6 +480,8 @@ Audit entries for document template updates
 Audit entries for document template default selection
 Audit entries for document template activation/deactivation
 Audit entries for default document template seeding
+Audit entries for document template import
+Audit entries for document template export
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -510,6 +525,8 @@ Document template list state
 Document template filter state
 Document template create/edit form state
 Document template seed/default/active-state action state
+Document template import form state
+Document template export action state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
@@ -560,6 +577,8 @@ Scopes of Work
 Document Templates
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
+`GET /document-templates/{templateId}/export`
+`POST /document-templates/import`
 `POST /document-templates`
 `PUT /document-templates/{templateId}`
 `POST /document-templates/{templateId}/default`
@@ -617,6 +636,8 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `POST /scopes-of-work/{scopeId}/status`
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
+`GET /document-templates/{templateId}/export`
+`POST /document-templates/import`
 `POST /document-templates`
 `PUT /document-templates/{templateId}`
 `POST /document-templates/{templateId}/default`
@@ -648,6 +669,8 @@ Quote/contract/scope-of-work linking design
 Automatic expiration logic
 Printable document generation from database records
 Template-backed document rendering
+DOCX template import/export foundation
+Original file byte storage and file download workflow
 Placeholder-token document generation
 Default template selection and fallback document rendering
 Browser-based hard-copy printing workflow
@@ -1257,6 +1280,8 @@ EF Core migration for document templates
 Document template management endpoints:
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
+`GET /document-templates/{templateId}/export`
+`POST /document-templates/import`
 `POST /document-templates`
 `PUT /document-templates/{templateId}`
 `POST /document-templates/{templateId}/default`
@@ -1373,6 +1398,72 @@ Deactivate a default template.
 Confirm the generated document falls back cleanly when no active template is available.
 Confirm Audit Review shows template events.
 Confirm existing quote, contract, and scope-of-work document workflows still work.
+✅ Phase 13c — Completed
+Phase 13c added the DOCX template import/export foundation while preserving the existing HTML-backed rendering workflow.
+Implemented
+Extended `DocumentTemplate` model with import/export metadata:
+`SourceFormat`
+`OriginalFileName`
+`OriginalContentType`
+`OriginalFileBytes`
+`ImportedAtUtc`
+EF Core migration for document-template import/export fields
+Updated document-template database configuration
+Document template source-format tracking:
+`Html`
+`Docx`
+DOCX original-file byte storage
+Original imported filename storage
+Original imported content-type storage
+Imported timestamp storage
+Template export endpoint:
+`GET /document-templates/{templateId}/export`
+DOCX template import endpoint:
+`POST /document-templates/import`
+HTML-created templates export as `.html`
+DOCX-imported templates export as the original `.docx`
+DOCX import validation:
+Requires multipart form upload
+Requires `.docx` file extension
+Rejects empty files
+Rejects files over 10 MB
+Requires valid document type:
+`Quote`
+`Contract`
+`ScopeOfWork`
+Imported DOCX templates can be set as default
+Imported DOCX templates can include optional fallback HTML
+Imported DOCX templates receive placeholder fallback HTML when no fallback HTML is supplied
+Existing template-backed quote/contract/scope-of-work rendering remains intact
+Frontend DOCX Import Template panel
+Frontend template source-format display
+Frontend original filename display
+Frontend imported date display
+Frontend Export button per template
+Frontend imported DOCX export workflow
+Frontend HTML template export workflow
+Document template import audit event:
+`DocumentTemplateImported`
+Document template export audit event:
+`DocumentTemplateExported`
+Verified Flow
+Sign in as Owner or Admin.
+Open the Document Templates panel.
+Import a `.docx` template.
+Confirm the imported template appears in the template list.
+Confirm the imported template shows `Docx` source format.
+Confirm the imported template shows the original filename.
+Export the imported DOCX template.
+Confirm the downloaded file is the original `.docx`.
+Create or select an HTML-created template.
+Export the HTML-created template.
+Confirm the downloaded file is `.html`.
+Set an imported DOCX template as default.
+Confirm existing template-backed document rendering remains stable.
+Confirm Audit Review shows `DocumentTemplateImported`.
+Confirm Audit Review shows `DocumentTemplateExported`.
+Important Phase 13c Boundary
+Phase 13c stores and exports original DOCX templates. It does not yet render finished quote/contract/scope-of-work documents directly from DOCX files. Full DOCX-to-record rendering and generated output files are planned for the next document generation phase.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1597,6 +1688,34 @@ curl -i -X POST http://localhost:8080/document-templates/<TEMPLATE_ID>/active \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OWNER_TOKEN" \
   -d '{"isActive":true}'
+```
+Export Document Template
+Replace `<TEMPLATE_ID>` with an actual template ID.
+```bash
+curl -i -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/document-templates/<TEMPLATE_ID>/export \
+  --output exported-template.html
+```
+Import DOCX Document Template
+Replace `/path/to/template.docx` with a real local `.docx` file path.
+```bash
+curl -i -X POST http://localhost:8080/document-templates/import \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -F "name=Imported Quote Template" \
+  -F "documentType=Quote" \
+  -F "isDefault=false" \
+  -F "file=@/path/to/template.docx"
+```
+Import DOCX Document Template with Optional Fallback HTML
+Replace `/path/to/template.docx` with a real local `.docx` file path.
+```bash
+curl -i -X POST http://localhost:8080/document-templates/import \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -F "name=Imported Contract Template" \
+  -F "documentType=Contract" \
+  -F "isDefault=false" \
+  -F "contentHtml=<section><h1>{{ContractNumber}}</h1><p>{{CustomerName}}</p></section>" \
+  -F "file=@/path/to/template.docx"
 ```
 Create Quote
 Replace `<CUSTOMER_ID>` with an actual customer ID.
@@ -1887,15 +2006,10 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 13c:
-DOCX template import/export
-Import Word-created templates
-Export stored templates
-Preserve original DOCX template files
-Convert/extract template content as needed
 Phase 13d:
 Server-side generated output files
 Generate DOCX/PDF files from live CRM records
+Render stored DOCX templates against quote/contract/scope-of-work records
 Store generated output documents
 Attach generated documents to quotes/contracts/scope-of-work records
 Later Phases
@@ -1909,7 +2023,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 13 complete — Database-backed document templates, Admin/Owner template management, template seeding, default/active template workflow, placeholder-token rendering, and template-backed quote/contract/scope-of-work printable documents are working.
+Phase 13c complete — DOCX template import/export, original DOCX storage, HTML template export, source-format tracking, import/export audit events, and frontend import/export controls are working.
 ```
 ---
 👤 Author

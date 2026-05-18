@@ -10,6 +10,16 @@ public class DocumentTemplate
 
     public string ContentHtml { get; set; } = "";
 
+    public string SourceFormat { get; set; } = "Html";
+
+    public string OriginalFileName { get; set; } = "";
+
+    public string OriginalContentType { get; set; } = "";
+
+    public byte[]? OriginalFileBytes { get; set; }
+
+    public DateTime? ImportedAtUtc { get; set; }
+
     public bool IsDefault { get; set; }
 
     public bool IsActive { get; set; } = true;

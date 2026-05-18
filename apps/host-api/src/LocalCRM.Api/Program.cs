@@ -5,6 +5,7 @@ using System.Net;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Http;
 using Microsoft.IdentityModel.Tokens;
 using LocalCRM.Api.Data;
 using LocalCRM.Api.Models;
@@ -2020,6 +2021,143 @@ app.MapGet("/document-templates/{templateId:guid}", async (
         : Results.Ok(ToDocumentTemplateResponse(template));
 }).RequireAuthorization("AdminOrOwner");
 
+
+app.MapGet("/document-templates/{templateId:guid}/export", async (
+    Guid templateId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var template = await db.DocumentTemplates.FindAsync(templateId);
+    if (template is null)
+    {
+        return Results.NotFound(new { error = "Document template not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var safeName = MakeSafeFileName(template.Name);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = "DocumentTemplateExported",
+        Details = $"Document template '{template.Name}' exported as '{template.SourceFormat}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Document template {TemplateName} exported by {PerformedBy}", template.Name, performedBy);
+
+    if (template.SourceFormat == "Docx" && template.OriginalFileBytes is not null && template.OriginalFileBytes.Length > 0)
+    {
+        var fileName = string.IsNullOrWhiteSpace(template.OriginalFileName)
+            ? $"{safeName}.docx"
+            : template.OriginalFileName;
+
+        return Results.File(
+            template.OriginalFileBytes,
+            string.IsNullOrWhiteSpace(template.OriginalContentType)
+                ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                : template.OriginalContentType,
+            fileName);
+    }
+
+    var htmlBytes = Encoding.UTF8.GetBytes(template.ContentHtml);
+    return Results.File(htmlBytes, "text/html; charset=utf-8", $"{safeName}.html");
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/document-templates/import", async (
+    HttpRequest request,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "Template import requires multipart/form-data" });
+    }
+
+    var form = await request.ReadFormAsync();
+
+    var name = form["name"].ToString();
+    var documentType = form["documentType"].ToString();
+    var isDefaultRaw = form["isDefault"].ToString();
+    var contentHtml = form["contentHtml"].ToString();
+
+    if (!bool.TryParse(isDefaultRaw, out var isDefault))
+    {
+        isDefault = false;
+    }
+
+    var file = form.Files.GetFile("file");
+
+    var validationError = ValidateImportedDocumentTemplateInput(name, documentType, file);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var documentTypeTrimmed = documentType.Trim();
+    var nowUtc = DateTime.UtcNow;
+
+    if (isDefault)
+    {
+        await ClearDefaultTemplatesForTypeAsync(db, documentTypeTrimmed);
+    }
+
+    await using var stream = file!.OpenReadStream();
+    using var memoryStream = new MemoryStream();
+    await stream.CopyToAsync(memoryStream);
+
+    var template = new DocumentTemplate
+    {
+        Id = Guid.NewGuid(),
+        Name = name.Trim(),
+        DocumentType = documentTypeTrimmed,
+        ContentHtml = string.IsNullOrWhiteSpace(contentHtml)
+            ? BuildImportedDocxPlaceholderHtml(name.Trim())
+            : contentHtml.Trim(),
+        SourceFormat = "Docx",
+        OriginalFileName = file.FileName,
+        OriginalContentType = string.IsNullOrWhiteSpace(file.ContentType)
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : file.ContentType,
+        OriginalFileBytes = memoryStream.ToArray(),
+        ImportedAtUtc = nowUtc,
+        IsDefault = isDefault,
+        IsActive = true,
+        CreatedAtUtc = nowUtc,
+        UpdatedAtUtc = nowUtc
+    };
+
+    db.DocumentTemplates.Add(template);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = "DocumentTemplateImported",
+        Details = $"DOCX document template '{template.Name}' imported for '{template.DocumentType}' from file '{template.OriginalFileName}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("DOCX document template {TemplateName} imported for {DocumentType} by {PerformedBy}", template.Name, template.DocumentType, performedBy);
+
+    return Results.Created($"/document-templates/{template.Id}", ToDocumentTemplateResponse(template));
+}).DisableAntiforgery().RequireAuthorization("AdminOrOwner");
+
 app.MapPost("/document-templates", async (
     CreateDocumentTemplateRequest input,
     LocalCrmDbContext db,
@@ -2048,6 +2186,11 @@ app.MapPost("/document-templates", async (
         Name = input.Name.Trim(),
         DocumentType = documentType,
         ContentHtml = input.ContentHtml.Trim(),
+        SourceFormat = "Html",
+        OriginalFileName = "",
+        OriginalContentType = "",
+        OriginalFileBytes = null,
+        ImportedAtUtc = null,
         IsDefault = input.IsDefault,
         IsActive = true,
         CreatedAtUtc = nowUtc,
@@ -2106,6 +2249,11 @@ app.MapPut("/document-templates/{templateId:guid}", async (
     template.Name = input.Name.Trim();
     template.DocumentType = documentType;
     template.ContentHtml = input.ContentHtml.Trim();
+    template.SourceFormat = "Html";
+    template.OriginalFileName = "";
+    template.OriginalContentType = "";
+    template.OriginalFileBytes = null;
+    template.ImportedAtUtc = null;
     template.IsDefault = input.IsDefault;
     template.IsActive = input.IsActive;
     template.UpdatedAtUtc = nowUtc;
@@ -2819,6 +2967,11 @@ static IEnumerable<DocumentTemplate> GetDefaultDocumentTemplates(DateTime nowUtc
             Name = "Default Quote Template",
             DocumentType = "Quote",
             ContentHtml = GetDefaultQuoteTemplateHtml(),
+            SourceFormat = "Html",
+            OriginalFileName = "",
+            OriginalContentType = "",
+            OriginalFileBytes = null,
+            ImportedAtUtc = null,
             IsDefault = false,
             IsActive = true,
             CreatedAtUtc = nowUtc,
@@ -2830,6 +2983,11 @@ static IEnumerable<DocumentTemplate> GetDefaultDocumentTemplates(DateTime nowUtc
             Name = "Default Contract Template",
             DocumentType = "Contract",
             ContentHtml = GetDefaultContractTemplateHtml(),
+            SourceFormat = "Html",
+            OriginalFileName = "",
+            OriginalContentType = "",
+            OriginalFileBytes = null,
+            ImportedAtUtc = null,
             IsDefault = false,
             IsActive = true,
             CreatedAtUtc = nowUtc,
@@ -2841,6 +2999,11 @@ static IEnumerable<DocumentTemplate> GetDefaultDocumentTemplates(DateTime nowUtc
             Name = "Default Scope of Work Template",
             DocumentType = "ScopeOfWork",
             ContentHtml = GetDefaultScopeOfWorkTemplateHtml(),
+            SourceFormat = "Html",
+            OriginalFileName = "",
+            OriginalContentType = "",
+            OriginalFileBytes = null,
+            ImportedAtUtc = null,
             IsDefault = false,
             IsActive = true,
             CreatedAtUtc = nowUtc,
@@ -2921,6 +3084,10 @@ static DocumentTemplateResponse ToDocumentTemplateResponse(DocumentTemplate temp
         template.Name,
         template.DocumentType,
         template.ContentHtml,
+        template.SourceFormat,
+        template.OriginalFileName,
+        template.OriginalContentType,
+        template.ImportedAtUtc,
         template.IsDefault,
         template.IsActive,
         template.CreatedAtUtc,
@@ -2963,6 +3130,67 @@ static bool IsValidDocumentType(string documentType)
     return documentType == "Quote" ||
         documentType == "Contract" ||
         documentType == "ScopeOfWork";
+}
+
+static string ValidateImportedDocumentTemplateInput(string name, string documentType, IFormFile? file)
+{
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        return "Template name is required";
+    }
+
+    if (name.Trim().Length < 2)
+    {
+        return "Template name must be at least 2 characters";
+    }
+
+    if (!IsValidDocumentType(documentType.Trim()))
+    {
+        return "Document type must be Quote, Contract, or ScopeOfWork";
+    }
+
+    if (file is null || file.Length == 0)
+    {
+        return "A DOCX template file is required";
+    }
+
+    if (file.Length > 10 * 1024 * 1024)
+    {
+        return "Template file cannot exceed 10 MB";
+    }
+
+    var extension = Path.GetExtension(file.FileName);
+    if (!string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Only .docx template files are supported for import";
+    }
+
+    return "";
+}
+
+static string BuildImportedDocxPlaceholderHtml(string templateName)
+{
+    return $"""
+<section>
+  <h1>{EncodeHtml(templateName)}</h1>
+  <p>This template was imported from DOCX and the original file is stored for export.</p>
+  <p>DOCX-to-rendered-output mapping will be wired in the next document generation phase.</p>
+</section>
+""";
+}
+
+static string MakeSafeFileName(string fileName)
+{
+    var invalidCharacters = Path.GetInvalidFileNameChars();
+    var safeCharacters = fileName
+        .Select(character => invalidCharacters.Contains(character) ? '-' : character)
+        .ToArray();
+
+    var safeName = new string(safeCharacters).Trim();
+
+    return string.IsNullOrWhiteSpace(safeName)
+        ? "document-template"
+        : safeName;
 }
 
 static string BuildScopeOfWorkDocumentHtml(ScopeOfWork scopeOfWork, Customer customer, Quote? quote, Contract? contract, DateTime generatedAtUtc)
@@ -4313,6 +4541,10 @@ public record DocumentTemplateResponse(
     string Name,
     string DocumentType,
     string ContentHtml,
+    string SourceFormat,
+    string OriginalFileName,
+    string OriginalContentType,
+    DateTime? ImportedAtUtc,
     bool IsDefault,
     bool IsActive,
     DateTime CreatedAtUtc,
