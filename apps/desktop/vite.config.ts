@@ -50,6 +50,10 @@ export default defineConfig({
       "/scopes-of-work": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/document-templates": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }

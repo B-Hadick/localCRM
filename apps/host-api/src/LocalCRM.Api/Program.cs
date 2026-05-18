@@ -1024,7 +1024,14 @@ app.MapGet("/quotes/{quoteId:guid}/document", async (
     }
 
     var nowUtc = DateTime.UtcNow;
-    var html = BuildQuoteDocumentHtml(quote, customer, nowUtc);
+    var template = await GetDefaultDocumentTemplateAsync(db, "Quote");
+    var html = template is null
+        ? BuildQuoteDocumentHtml(quote, customer, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Quote",
+            template,
+            BuildQuoteTemplateValues(quote, customer, nowUtc),
+            nowUtc);
 
     db.AuditLogs.Add(new AuditLog
     {
@@ -1390,7 +1397,14 @@ app.MapGet("/contracts/{contractId:guid}/document", async (
     }
 
     var nowUtc = DateTime.UtcNow;
-    var html = BuildContractDocumentHtml(contract, customer, quote, nowUtc);
+    var template = await GetDefaultDocumentTemplateAsync(db, "Contract");
+    var html = template is null
+        ? BuildContractDocumentHtml(contract, customer, quote, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Contract",
+            template,
+            BuildContractTemplateValues(contract, customer, quote, nowUtc),
+            nowUtc);
 
     db.AuditLogs.Add(new AuditLog
     {
@@ -1844,7 +1858,14 @@ app.MapGet("/scopes-of-work/{scopeId:guid}/document", async (
     }
 
     var nowUtc = DateTime.UtcNow;
-    var html = BuildScopeOfWorkDocumentHtml(scopeOfWork, customer, quote, contract, nowUtc);
+    var template = await GetDefaultDocumentTemplateAsync(db, "ScopeOfWork");
+    var html = template is null
+        ? BuildScopeOfWorkDocumentHtml(scopeOfWork, customer, quote, contract, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Scope of Work",
+            template,
+            BuildScopeOfWorkTemplateValues(scopeOfWork, customer, quote, contract, nowUtc),
+            nowUtc);
 
     db.AuditLogs.Add(new AuditLog
     {
@@ -1955,6 +1976,293 @@ app.MapPost("/scopes-of-work/{scopeId:guid}/status", async (
         quote?.QuoteNumber ?? "",
         contract?.ContractNumber ?? ""
     ));
+}).RequireAuthorization("AdminOrOwner");
+
+
+app.MapGet("/document-templates", async (
+    string? documentType,
+    bool? activeOnly,
+    LocalCrmDbContext db) =>
+{
+    var query = db.DocumentTemplates.AsQueryable();
+
+    if (!string.IsNullOrWhiteSpace(documentType) && documentType != "All")
+    {
+        query = query.Where(template => template.DocumentType == documentType);
+    }
+
+    if (activeOnly == true)
+    {
+        query = query.Where(template => template.IsActive);
+    }
+
+    var templateRows = await query
+        .OrderBy(template => template.DocumentType)
+        .ThenByDescending(template => template.IsDefault)
+        .ThenBy(template => template.Name)
+        .ToListAsync();
+
+    var templates = templateRows
+        .Select(ToDocumentTemplateResponse)
+        .ToList();
+
+    return Results.Ok(templates);
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapGet("/document-templates/{templateId:guid}", async (
+    Guid templateId,
+    LocalCrmDbContext db) =>
+{
+    var template = await db.DocumentTemplates.FindAsync(templateId);
+
+    return template is null
+        ? Results.NotFound(new { error = "Document template not found" })
+        : Results.Ok(ToDocumentTemplateResponse(template));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/document-templates", async (
+    CreateDocumentTemplateRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var validationError = ValidateDocumentTemplateInput(input.Name, input.DocumentType, input.ContentHtml);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var documentType = input.DocumentType.Trim();
+    var nowUtc = DateTime.UtcNow;
+
+    if (input.IsDefault)
+    {
+        await ClearDefaultTemplatesForTypeAsync(db, documentType);
+    }
+
+    var template = new DocumentTemplate
+    {
+        Id = Guid.NewGuid(),
+        Name = input.Name.Trim(),
+        DocumentType = documentType,
+        ContentHtml = input.ContentHtml.Trim(),
+        IsDefault = input.IsDefault,
+        IsActive = true,
+        CreatedAtUtc = nowUtc,
+        UpdatedAtUtc = nowUtc
+    };
+
+    db.DocumentTemplates.Add(template);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = "DocumentTemplateCreated",
+        Details = $"Document template '{template.Name}' created for '{template.DocumentType}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Document template {TemplateName} created for {DocumentType} by {PerformedBy}", template.Name, template.DocumentType, performedBy);
+
+    return Results.Created($"/document-templates/{template.Id}", ToDocumentTemplateResponse(template));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPut("/document-templates/{templateId:guid}", async (
+    Guid templateId,
+    UpdateDocumentTemplateRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var template = await db.DocumentTemplates.FindAsync(templateId);
+    if (template is null)
+    {
+        return Results.NotFound(new { error = "Document template not found" });
+    }
+
+    var validationError = ValidateDocumentTemplateInput(input.Name, input.DocumentType, input.ContentHtml);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var documentType = input.DocumentType.Trim();
+    var nowUtc = DateTime.UtcNow;
+
+    if (input.IsDefault)
+    {
+        await ClearDefaultTemplatesForTypeAsync(db, documentType, template.Id);
+    }
+
+    template.Name = input.Name.Trim();
+    template.DocumentType = documentType;
+    template.ContentHtml = input.ContentHtml.Trim();
+    template.IsDefault = input.IsDefault;
+    template.IsActive = input.IsActive;
+    template.UpdatedAtUtc = nowUtc;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = "DocumentTemplateUpdated",
+        Details = $"Document template '{template.Name}' updated for '{template.DocumentType}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Document template {TemplateName} updated for {DocumentType} by {PerformedBy}", template.Name, template.DocumentType, performedBy);
+
+    return Results.Ok(ToDocumentTemplateResponse(template));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/document-templates/{templateId:guid}/default", async (
+    Guid templateId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var template = await db.DocumentTemplates.FindAsync(templateId);
+    if (template is null)
+    {
+        return Results.NotFound(new { error = "Document template not found" });
+    }
+
+    if (!template.IsActive)
+    {
+        return Results.BadRequest(new { error = "Inactive templates cannot be set as default" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+
+    await ClearDefaultTemplatesForTypeAsync(db, template.DocumentType, template.Id);
+
+    template.IsDefault = true;
+    template.UpdatedAtUtc = nowUtc;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = "DocumentTemplateDefaultSet",
+        Details = $"Document template '{template.Name}' set as default for '{template.DocumentType}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Document template {TemplateName} set as default for {DocumentType} by {PerformedBy}", template.Name, template.DocumentType, performedBy);
+
+    return Results.Ok(ToDocumentTemplateResponse(template));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/document-templates/{templateId:guid}/active", async (
+    Guid templateId,
+    UpdateDocumentTemplateActiveRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var template = await db.DocumentTemplates.FindAsync(templateId);
+    if (template is null)
+    {
+        return Results.NotFound(new { error = "Document template not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+
+    template.IsActive = input.IsActive;
+    template.UpdatedAtUtc = nowUtc;
+
+    if (!template.IsActive)
+    {
+        template.IsDefault = false;
+    }
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "DocumentTemplate",
+        EntityId = template.Id.ToString(),
+        Action = input.IsActive ? "DocumentTemplateActivated" : "DocumentTemplateDeactivated",
+        Details = input.IsActive
+            ? $"Document template '{template.Name}' activated."
+            : $"Document template '{template.Name}' deactivated.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Document template {TemplateName} active state changed to {IsActive} by {PerformedBy}", template.Name, template.IsActive, performedBy);
+
+    return Results.Ok(ToDocumentTemplateResponse(template));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/document-templates/seed-defaults", async (
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var nowUtc = DateTime.UtcNow;
+
+    var seeded = new List<DocumentTemplate>();
+
+    foreach (var defaultTemplate in GetDefaultDocumentTemplates(nowUtc))
+    {
+        var exists = await db.DocumentTemplates.AnyAsync(template =>
+            template.DocumentType == defaultTemplate.DocumentType &&
+            template.Name == defaultTemplate.Name);
+
+        if (exists)
+        {
+            continue;
+        }
+
+        var hasDefaultForType = await db.DocumentTemplates.AnyAsync(template =>
+            template.DocumentType == defaultTemplate.DocumentType &&
+            template.IsDefault);
+
+        defaultTemplate.IsDefault = !hasDefaultForType;
+        seeded.Add(defaultTemplate);
+        db.DocumentTemplates.Add(defaultTemplate);
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "DocumentTemplate",
+            EntityId = defaultTemplate.Id.ToString(),
+            Action = "DocumentTemplateSeeded",
+            Details = $"Default document template '{defaultTemplate.Name}' seeded for '{defaultTemplate.DocumentType}'.",
+            PerformedBy = performedBy,
+            CreatedAtUtc = nowUtc
+        });
+    }
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("{TemplateCount} default document templates seeded by {PerformedBy}", seeded.Count, performedBy);
+
+    return Results.Ok(seeded.Select(ToDocumentTemplateResponse).ToList());
 }).RequireAuthorization("AdminOrOwner");
 
 app.MapGet("/customer-edit-requests", async (
@@ -2244,6 +2552,418 @@ app.Run();
 
 
 
+
+
+
+static async Task<DocumentTemplate?> GetDefaultDocumentTemplateAsync(LocalCrmDbContext db, string documentType)
+{
+    var defaultTemplate = await db.DocumentTemplates
+        .Where(template =>
+            template.DocumentType == documentType &&
+            template.IsActive &&
+            template.IsDefault)
+        .OrderByDescending(template => template.UpdatedAtUtc)
+        .FirstOrDefaultAsync();
+
+    if (defaultTemplate is not null)
+    {
+        return defaultTemplate;
+    }
+
+    return await db.DocumentTemplates
+        .Where(template =>
+            template.DocumentType == documentType &&
+            template.IsActive)
+        .OrderByDescending(template => template.UpdatedAtUtc)
+        .FirstOrDefaultAsync();
+}
+
+static string BuildTemplateBackedPrintableDocumentHtml(
+    string documentLabel,
+    DocumentTemplate template,
+    Dictionary<string, string> values,
+    DateTime generatedAtUtc)
+{
+    var renderedBody = RenderDocumentTemplate(template.ContentHtml, values);
+
+    return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{EncodeHtml(documentLabel)}} - {{EncodeHtml(template.Name)}}</title>
+  <style>
+    :root {
+      color: #1f2933;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    body {
+      margin: 0;
+      background: #f4f6f8;
+    }
+
+    .page {
+      max-width: 850px;
+      margin: 0 auto;
+      padding: 32px;
+      background: white;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #1f2933;
+      color: white;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .template-meta {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid #d9e2ec;
+      color: #52606d;
+      font-size: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+        min-height: auto;
+      }
+
+      .actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="actions">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+
+    {{renderedBody}}
+
+    <section class="template-meta">
+      <div>Generated from LocalCRM template "{{EncodeHtml(template.Name)}}" for {{EncodeHtml(documentLabel)}}.</div>
+      <div>Generated: {{FormatDateForDocument(generatedAtUtc)}}.</div>
+      <div>Use the browser print dialog to print a hard copy or save as PDF.</div>
+    </section>
+  </main>
+</body>
+</html>
+""";
+}
+
+static string RenderDocumentTemplate(string templateHtml, Dictionary<string, string> values)
+{
+    var rendered = templateHtml;
+
+    foreach (var value in values)
+    {
+        rendered = rendered.Replace("{{" + value.Key + "}}", EncodeHtml(value.Value));
+    }
+
+    return rendered;
+}
+
+static Dictionary<string, string> BuildQuoteTemplateValues(Quote quote, Customer customer, DateTime generatedAtUtc)
+{
+    return new Dictionary<string, string>
+    {
+        ["QuoteId"] = quote.Id.ToString(),
+        ["QuoteNumber"] = quote.QuoteNumber,
+        ["DocumentType"] = "Quote",
+        ["Status"] = quote.Status,
+        ["QuoteDate"] = FormatDateForDocument(quote.QuoteDateUtc),
+        ["GeneratedDate"] = FormatDateForDocument(generatedAtUtc),
+        ["CustomerId"] = customer.Id.ToString(),
+        ["CustomerName"] = customer.Name,
+        ["CustomerType"] = customer.Type,
+        ["CustomerEmail"] = customer.Email,
+        ["CustomerPhone"] = customer.Phone,
+        ["CustomerAddress"] = BuildCustomerAddress(customer),
+        ["Title"] = quote.Title,
+        ["Description"] = quote.Description,
+        ["Amount"] = FormatCurrencyForDocument(quote.Amount),
+        ["SentDate"] = quote.SentAtUtc.HasValue ? FormatDateForDocument(quote.SentAtUtc.Value) : "",
+        ["AcceptedDate"] = quote.AcceptedAtUtc.HasValue ? FormatDateForDocument(quote.AcceptedAtUtc.Value) : "",
+        ["RejectedDate"] = quote.RejectedAtUtc.HasValue ? FormatDateForDocument(quote.RejectedAtUtc.Value) : "",
+        ["ExpiredDate"] = quote.ExpiredAtUtc.HasValue ? FormatDateForDocument(quote.ExpiredAtUtc.Value) : ""
+    };
+}
+
+static Dictionary<string, string> BuildContractTemplateValues(Contract contract, Customer customer, Quote? quote, DateTime generatedAtUtc)
+{
+    return new Dictionary<string, string>
+    {
+        ["ContractId"] = contract.Id.ToString(),
+        ["ContractNumber"] = contract.ContractNumber,
+        ["DocumentType"] = "Contract",
+        ["Status"] = contract.Status,
+        ["ContractDate"] = FormatDateForDocument(contract.ContractDateUtc),
+        ["GeneratedDate"] = FormatDateForDocument(generatedAtUtc),
+        ["CustomerId"] = customer.Id.ToString(),
+        ["CustomerName"] = customer.Name,
+        ["CustomerType"] = customer.Type,
+        ["CustomerEmail"] = customer.Email,
+        ["CustomerPhone"] = customer.Phone,
+        ["CustomerAddress"] = BuildCustomerAddress(customer),
+        ["QuoteId"] = quote?.Id.ToString() ?? "",
+        ["QuoteNumber"] = quote?.QuoteNumber ?? "",
+        ["QuoteStatus"] = quote?.Status ?? "",
+        ["ScopeOfWorkId"] = contract.ScopeOfWorkId?.ToString() ?? "",
+        ["Title"] = contract.Title,
+        ["Description"] = contract.Description,
+        ["Amount"] = FormatCurrencyForDocument(contract.Amount),
+        ["SentDate"] = contract.SentAtUtc.HasValue ? FormatDateForDocument(contract.SentAtUtc.Value) : "",
+        ["SignedDate"] = contract.SignedAtUtc.HasValue ? FormatDateForDocument(contract.SignedAtUtc.Value) : "",
+        ["CompletedBillableDate"] = contract.CompletedBillableAtUtc.HasValue ? FormatDateForDocument(contract.CompletedBillableAtUtc.Value) : "",
+        ["CancelledDate"] = contract.CancelledAtUtc.HasValue ? FormatDateForDocument(contract.CancelledAtUtc.Value) : ""
+    };
+}
+
+static Dictionary<string, string> BuildScopeOfWorkTemplateValues(
+    ScopeOfWork scopeOfWork,
+    Customer customer,
+    Quote? quote,
+    Contract? contract,
+    DateTime generatedAtUtc)
+{
+    return new Dictionary<string, string>
+    {
+        ["ScopeOfWorkId"] = scopeOfWork.Id.ToString(),
+        ["ScopeNumber"] = scopeOfWork.ScopeNumber,
+        ["DocumentType"] = "ScopeOfWork",
+        ["Status"] = scopeOfWork.Status,
+        ["ScopeDate"] = FormatDateForDocument(scopeOfWork.ScopeDateUtc),
+        ["GeneratedDate"] = FormatDateForDocument(generatedAtUtc),
+        ["CustomerId"] = customer.Id.ToString(),
+        ["CustomerName"] = customer.Name,
+        ["CustomerType"] = customer.Type,
+        ["CustomerEmail"] = customer.Email,
+        ["CustomerPhone"] = customer.Phone,
+        ["CustomerAddress"] = BuildCustomerAddress(customer),
+        ["QuoteId"] = quote?.Id.ToString() ?? "",
+        ["QuoteNumber"] = quote?.QuoteNumber ?? "",
+        ["QuoteStatus"] = quote?.Status ?? "",
+        ["ContractId"] = contract?.Id.ToString() ?? "",
+        ["ContractNumber"] = contract?.ContractNumber ?? "",
+        ["ContractStatus"] = contract?.Status ?? "",
+        ["Title"] = scopeOfWork.Title,
+        ["Description"] = scopeOfWork.Description,
+        ["Deliverables"] = scopeOfWork.Deliverables,
+        ["Assumptions"] = scopeOfWork.Assumptions,
+        ["Exclusions"] = scopeOfWork.Exclusions,
+        ["EstimatedAmount"] = FormatCurrencyForDocument(scopeOfWork.EstimatedAmount),
+        ["ReviewedDate"] = scopeOfWork.ReviewedAtUtc.HasValue ? FormatDateForDocument(scopeOfWork.ReviewedAtUtc.Value) : "",
+        ["ApprovedDate"] = scopeOfWork.ApprovedAtUtc.HasValue ? FormatDateForDocument(scopeOfWork.ApprovedAtUtc.Value) : "",
+        ["ActivatedDate"] = scopeOfWork.ActivatedAtUtc.HasValue ? FormatDateForDocument(scopeOfWork.ActivatedAtUtc.Value) : "",
+        ["CompletedDate"] = scopeOfWork.CompletedAtUtc.HasValue ? FormatDateForDocument(scopeOfWork.CompletedAtUtc.Value) : "",
+        ["CancelledDate"] = scopeOfWork.CancelledAtUtc.HasValue ? FormatDateForDocument(scopeOfWork.CancelledAtUtc.Value) : ""
+    };
+}
+
+static string BuildCustomerAddress(Customer customer)
+{
+    return string.Join(", ", new[]
+        {
+            customer.AddressLine1,
+            customer.AddressLine2,
+            customer.City,
+            customer.State,
+            customer.PostalCode
+        }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+}
+
+static IEnumerable<DocumentTemplate> GetDefaultDocumentTemplates(DateTime nowUtc)
+{
+    return new[]
+    {
+        new DocumentTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = "Default Quote Template",
+            DocumentType = "Quote",
+            ContentHtml = GetDefaultQuoteTemplateHtml(),
+            IsDefault = false,
+            IsActive = true,
+            CreatedAtUtc = nowUtc,
+            UpdatedAtUtc = nowUtc
+        },
+        new DocumentTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = "Default Contract Template",
+            DocumentType = "Contract",
+            ContentHtml = GetDefaultContractTemplateHtml(),
+            IsDefault = false,
+            IsActive = true,
+            CreatedAtUtc = nowUtc,
+            UpdatedAtUtc = nowUtc
+        },
+        new DocumentTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = "Default Scope of Work Template",
+            DocumentType = "ScopeOfWork",
+            ContentHtml = GetDefaultScopeOfWorkTemplateHtml(),
+            IsDefault = false,
+            IsActive = true,
+            CreatedAtUtc = nowUtc,
+            UpdatedAtUtc = nowUtc
+        }
+    };
+}
+
+static string GetDefaultQuoteTemplateHtml()
+{
+    return """
+<section>
+  <h1>QUOTE</h1>
+  <p><strong>Quote #:</strong> {{QuoteNumber}}</p>
+  <p><strong>Status:</strong> {{Status}}</p>
+  <p><strong>Customer:</strong> {{CustomerName}}</p>
+  <p><strong>Title:</strong> {{Title}}</p>
+  <p><strong>Description:</strong> {{Description}}</p>
+  <p><strong>Amount:</strong> {{Amount}}</p>
+</section>
+""";
+}
+
+static string GetDefaultContractTemplateHtml()
+{
+    return """
+<section>
+  <h1>CONTRACT</h1>
+  <p><strong>Contract #:</strong> {{ContractNumber}}</p>
+  <p><strong>Status:</strong> {{Status}}</p>
+  <p><strong>Customer:</strong> {{CustomerName}}</p>
+  <p><strong>Linked Quote:</strong> {{QuoteNumber}}</p>
+  <p><strong>Title:</strong> {{Title}}</p>
+  <p><strong>Description:</strong> {{Description}}</p>
+  <p><strong>Amount:</strong> {{Amount}}</p>
+</section>
+""";
+}
+
+static string GetDefaultScopeOfWorkTemplateHtml()
+{
+    return """
+<section>
+  <h1>SCOPE OF WORK</h1>
+  <p><strong>SOW #:</strong> {{ScopeNumber}}</p>
+  <p><strong>Status:</strong> {{Status}}</p>
+  <p><strong>Customer:</strong> {{CustomerName}}</p>
+  <p><strong>Linked Quote:</strong> {{QuoteNumber}}</p>
+  <p><strong>Linked Contract:</strong> {{ContractNumber}}</p>
+  <p><strong>Title:</strong> {{Title}}</p>
+  <p><strong>Description:</strong> {{Description}}</p>
+  <p><strong>Deliverables:</strong> {{Deliverables}}</p>
+  <p><strong>Estimated Amount:</strong> {{EstimatedAmount}}</p>
+</section>
+""";
+}
+
+static async Task ClearDefaultTemplatesForTypeAsync(LocalCrmDbContext db, string documentType, Guid? exceptTemplateId = null)
+{
+    var existingDefaults = await db.DocumentTemplates
+        .Where(template =>
+            template.DocumentType == documentType &&
+            template.IsDefault &&
+            (!exceptTemplateId.HasValue || template.Id != exceptTemplateId.Value))
+        .ToListAsync();
+
+    foreach (var template in existingDefaults)
+    {
+        template.IsDefault = false;
+        template.UpdatedAtUtc = DateTime.UtcNow;
+    }
+}
+
+static DocumentTemplateResponse ToDocumentTemplateResponse(DocumentTemplate template)
+{
+    return new DocumentTemplateResponse(
+        template.Id,
+        template.Name,
+        template.DocumentType,
+        template.ContentHtml,
+        template.IsDefault,
+        template.IsActive,
+        template.CreatedAtUtc,
+        template.UpdatedAtUtc
+    );
+}
+
+static string ValidateDocumentTemplateInput(string name, string documentType, string contentHtml)
+{
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        return "Template name is required";
+    }
+
+    if (name.Trim().Length < 2)
+    {
+        return "Template name must be at least 2 characters";
+    }
+
+    if (!IsValidDocumentType(documentType.Trim()))
+    {
+        return "Document type must be Quote, Contract, or ScopeOfWork";
+    }
+
+    if (string.IsNullOrWhiteSpace(contentHtml))
+    {
+        return "Template HTML content is required";
+    }
+
+    if (contentHtml.Length > 20000)
+    {
+        return "Template HTML content cannot exceed 20000 characters";
+    }
+
+    return "";
+}
+
+static bool IsValidDocumentType(string documentType)
+{
+    return documentType == "Quote" ||
+        documentType == "Contract" ||
+        documentType == "ScopeOfWork";
+}
 
 static string BuildScopeOfWorkDocumentHtml(ScopeOfWork scopeOfWork, Customer customer, Quote? quote, Contract? contract, DateTime generatedAtUtc)
 {
@@ -3567,6 +4287,37 @@ static bool IsValidEmail(string email)
 }
 
 
+
+
+public record CreateDocumentTemplateRequest(
+    string Name,
+    string DocumentType,
+    string ContentHtml,
+    bool IsDefault
+);
+
+public record UpdateDocumentTemplateRequest(
+    string Name,
+    string DocumentType,
+    string ContentHtml,
+    bool IsDefault,
+    bool IsActive
+);
+
+public record UpdateDocumentTemplateActiveRequest(
+    bool IsActive
+);
+
+public record DocumentTemplateResponse(
+    Guid Id,
+    string Name,
+    string DocumentType,
+    string ContentHtml,
+    bool IsDefault,
+    bool IsActive,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc
+);
 
 public record CreateScopeOfWorkRequest(
     Guid CustomerId,

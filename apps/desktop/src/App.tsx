@@ -280,6 +280,26 @@ type ScopeOfWorkFilters = {
   to: string;
 };
 
+type DocumentTemplate = {
+  id: string;
+  name: string;
+  documentType: string;
+  contentHtml: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+};
+
+type DocumentTemplateForm = {
+  id: string;
+  name: string;
+  documentType: string;
+  contentHtml: string;
+  isDefault: boolean;
+  isActive: boolean;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -384,6 +404,15 @@ const emptyScopeOfWorkFilters: ScopeOfWorkFilters = {
   to: ""
 };
 
+const emptyDocumentTemplateForm: DocumentTemplateForm = {
+  id: "",
+  name: "",
+  documentType: "Quote",
+  contentHtml: "",
+  isDefault: false,
+  isActive: true
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -423,6 +452,7 @@ function App() {
   const [customerContracts, setCustomerContracts] = useState<Contract[]>([]);
   const [scopesOfWork, setScopesOfWork] = useState<ScopeOfWork[]>([]);
   const [customerScopesOfWork, setCustomerScopesOfWork] = useState<ScopeOfWork[]>([]);
+  const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -444,6 +474,7 @@ function App() {
   const [quoteFilters, setQuoteFilters] = useState<QuoteFilters>(emptyQuoteFilters);
   const [contractFilters, setContractFilters] = useState<ContractFilters>(emptyContractFilters);
   const [scopeOfWorkFilters, setScopeOfWorkFilters] = useState<ScopeOfWorkFilters>(emptyScopeOfWorkFilters);
+  const [documentTemplateTypeFilter, setDocumentTemplateTypeFilter] = useState("All");
 
   const [noteForm, setNoteForm] = useState({
     content: "",
@@ -453,6 +484,7 @@ function App() {
   const [quoteForm, setQuoteForm] = useState<QuoteForm>(emptyQuoteForm);
   const [contractForm, setContractForm] = useState<ContractForm>(emptyContractForm);
   const [scopeOfWorkForm, setScopeOfWorkForm] = useState<ScopeOfWorkForm>(emptyScopeOfWorkForm);
+  const [documentTemplateForm, setDocumentTemplateForm] = useState<DocumentTemplateForm>(emptyDocumentTemplateForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -657,6 +689,33 @@ function App() {
     return "";
   }
 
+  function validateDocumentTemplateForm(input: DocumentTemplateForm) {
+    const name = input.name.trim();
+    const contentHtml = input.contentHtml.trim();
+
+    if (!name) {
+      return "Template name is required.";
+    }
+
+    if (name.length < 2) {
+      return "Template name must be at least 2 characters.";
+    }
+
+    if (!["Quote", "Contract", "ScopeOfWork"].includes(input.documentType)) {
+      return "Document type must be Quote, Contract, or ScopeOfWork.";
+    }
+
+    if (!contentHtml) {
+      return "Template HTML content is required.";
+    }
+
+    if (contentHtml.length > 20000) {
+      return "Template HTML content cannot exceed 20000 characters.";
+    }
+
+    return "";
+  }
+
   function validateScopeOfWorkForm(input: ScopeOfWorkForm) {
     if (!input.customerId) {
       return "Select a customer before creating a scope of work.";
@@ -836,6 +895,7 @@ function App() {
     setCustomerContracts([]);
     setScopesOfWork([]);
     setCustomerScopesOfWork([]);
+    setDocumentTemplates([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -848,6 +908,8 @@ function App() {
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
     setAdminUserForm(emptyAdminUserForm);
+    setDocumentTemplateForm(emptyDocumentTemplateForm);
+    setDocumentTemplateTypeFilter("All");
     setStatus(message, "error");
   }
 
@@ -946,6 +1008,7 @@ function App() {
     setCustomerContracts([]);
     setScopesOfWork([]);
     setCustomerScopesOfWork([]);
+    setDocumentTemplates([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -957,6 +1020,8 @@ function App() {
     setStatusFilter("All");
     setStaffUserForm(emptyStaffUserForm);
     setAdminUserForm(emptyAdminUserForm);
+    setDocumentTemplateForm(emptyDocumentTemplateForm);
+    setDocumentTemplateTypeFilter("All");
     setStatus("Signed out.", "info");
   }
 
@@ -1161,6 +1226,43 @@ function App() {
       console.error(error);
       setGlobalAuditLogs([]);
       setStatus("Failed to load global audit log", "error");
+    }
+  }
+
+  async function loadDocumentTemplates() {
+    if (!currentUser || !isAdminOrOwner) {
+      setDocumentTemplates([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (documentTemplateTypeFilter !== "All") {
+        params.set("documentType", documentTemplateTypeFilter);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/document-templates?${queryString}` : "/document-templates";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as DocumentTemplate[];
+      setDocumentTemplates(data);
+    } catch (error) {
+      console.error(error);
+      setDocumentTemplates([]);
+      setStatus("Failed to load document templates", "error");
     }
   }
 
@@ -1593,7 +1695,8 @@ function App() {
       loadRequestQueue(),
       loadPendingCustomerIds(),
       loadUsers(),
-      loadGlobalAuditLogs()
+      loadGlobalAuditLogs(),
+      loadDocumentTemplates()
     ]);
   }
 
@@ -1636,6 +1739,7 @@ function App() {
       setPendingRequestCustomerIds([]);
       setDashboardSummary(emptyDashboardSummary);
       setUsers([]);
+      setDocumentTemplates([]);
     }
   }, [
     currentUser?.id,
@@ -1649,7 +1753,8 @@ function App() {
     auditFilters.action,
     auditFilters.performedBy,
     auditFilters.from,
-    auditFilters.to
+    auditFilters.to,
+    documentTemplateTypeFilter
   ]);
 
   useEffect(() => {
@@ -2403,6 +2508,196 @@ function App() {
     }
   }
 
+  async function handleDocumentTemplateSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can manage document templates.", "error");
+      return;
+    }
+
+    const validationError = validateDocumentTemplateForm(documentTemplateForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    const isEditing = Boolean(documentTemplateForm.id);
+    const url = isEditing
+      ? `/document-templates/${documentTemplateForm.id}`
+      : "/document-templates";
+
+    setStatus(isEditing ? "Updating document template..." : "Creating document template...", "info");
+
+    try {
+      const response = await fetch(url, {
+        method: isEditing ? "PUT" : "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          name: documentTemplateForm.name.trim(),
+          documentType: documentTemplateForm.documentType,
+          contentHtml: documentTemplateForm.contentHtml.trim(),
+          isDefault: documentTemplateForm.isDefault,
+          isActive: documentTemplateForm.isActive
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const savedTemplate = (await response.json()) as DocumentTemplate;
+
+      setDocumentTemplateForm(emptyDocumentTemplateForm);
+      setStatus(`Document template "${savedTemplate.name}" ${isEditing ? "updated" : "created"} successfully.`, "success");
+      await loadDocumentTemplates();
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to save document template.", "error");
+    }
+  }
+
+  function editDocumentTemplate(template: DocumentTemplate) {
+    setDocumentTemplateForm({
+      id: template.id,
+      name: template.name,
+      documentType: template.documentType,
+      contentHtml: template.contentHtml,
+      isDefault: template.isDefault,
+      isActive: template.isActive
+    });
+
+    setStatus(`Editing template "${template.name}".`, "info");
+  }
+
+  async function seedDefaultDocumentTemplates() {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can seed document templates.", "error");
+      return;
+    }
+
+    setStatus("Seeding default document templates...", "info");
+
+    try {
+      const response = await fetch("/document-templates/seed-defaults", {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const seededTemplates = (await response.json()) as DocumentTemplate[];
+
+      setStatus(`Seeded ${seededTemplates.length} default document templates.`, "success");
+      await loadDocumentTemplates();
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to seed default templates.", "error");
+    }
+  }
+
+  async function setDefaultDocumentTemplate(templateId: string) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can set default templates.", "error");
+      return;
+    }
+
+    setStatus("Setting default document template...", "info");
+
+    try {
+      const response = await fetch(`/document-templates/${templateId}/default`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setStatus("Default document template updated.", "success");
+      await loadDocumentTemplates();
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to set default template.", "error");
+    }
+  }
+
+  async function setDocumentTemplateActiveState(templateId: string, isActive: boolean) {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can update template active state.", "error");
+      return;
+    }
+
+    setStatus(isActive ? "Activating document template..." : "Deactivating document template...", "info");
+
+    try {
+      const response = await fetch(`/document-templates/${templateId}/active`, {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({ isActive })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      setStatus(isActive ? "Document template activated." : "Document template deactivated.", "success");
+      await loadDocumentTemplates();
+      await loadGlobalAuditLogs();
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to update template active state.", "error");
+    }
+  }
+
   async function handleAdminUserSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -2760,6 +3055,173 @@ function App() {
       <div className={`status-banner status-${statusType}`}>
         {statusMessage}
       </div>
+
+      {isAdminOrOwner && (
+        <section className="layout-grid">
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Document Templates</h2>
+              <span className="count-chip">{documentTemplates.length}</span>
+            </div>
+
+            <div className="note-actions-row">
+              <label>
+                Type
+                <select
+                  value={documentTemplateTypeFilter}
+                  onChange={(e) => setDocumentTemplateTypeFilter(e.target.value)}
+                >
+                  <option value="All">All Types</option>
+                  <option value="Quote">Quote</option>
+                  <option value="Contract">Contract</option>
+                  <option value="ScopeOfWork">Scope of Work</option>
+                </select>
+              </label>
+
+              <button type="button" onClick={loadDocumentTemplates}>
+                Refresh Templates
+              </button>
+
+              <button type="button" onClick={seedDefaultDocumentTemplates}>
+                Seed Defaults
+              </button>
+
+              <button type="button" onClick={() => setDocumentTemplateForm(emptyDocumentTemplateForm)}>
+                New Template
+              </button>
+            </div>
+
+            <div className="stack-list compact-list">
+              {documentTemplates.length === 0 ? (
+                <p className="muted-text">No document templates found.</p>
+              ) : (
+                documentTemplates.map((template) => (
+                  <div key={template.id} className="stack-item">
+                    <div className="stack-item-header">
+                      <strong>{template.name}</strong>
+                      <span className={`status-chip ${template.isActive ? "status-chip-active" : "status-chip-inactive"}`}>
+                        {template.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+
+                    <div className="compact-content">
+                      {template.documentType}
+                      {template.isDefault ? " · Default" : ""}
+                    </div>
+
+                    <div className="muted-text compact-meta">
+                      Updated {formatDate(template.updatedAtUtc)}
+                    </div>
+
+                    <div className="quote-status-row">
+                      <button type="button" onClick={() => editDocumentTemplate(template)}>
+                        Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDefaultDocumentTemplate(template.id)}
+                        disabled={!template.isActive || template.isDefault}
+                      >
+                        Set Default
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setDocumentTemplateActiveState(template.id, !template.isActive)}
+                      >
+                        {template.isActive ? "Deactivate" : "Activate"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>{documentTemplateForm.id ? "Edit Template" : "Create Template"}</h2>
+              <span className="status-chip status-chip-active">Phase 13a</span>
+            </div>
+
+            <form className="customer-form" onSubmit={handleDocumentTemplateSubmit}>
+              <div className="form-grid">
+                <label>
+                  Template Name
+                  <input
+                    value={documentTemplateForm.name}
+                    onChange={(e) => setDocumentTemplateForm({ ...documentTemplateForm, name: e.target.value })}
+                    placeholder="Default Quote Template"
+                  />
+                </label>
+
+                <label>
+                  Document Type
+                  <select
+                    value={documentTemplateForm.documentType}
+                    onChange={(e) => setDocumentTemplateForm({ ...documentTemplateForm, documentType: e.target.value })}
+                  >
+                    <option value="Quote">Quote</option>
+                    <option value="Contract">Contract</option>
+                    <option value="ScopeOfWork">Scope of Work</option>
+                  </select>
+                </label>
+
+                <label>
+                  Default Template
+                  <select
+                    value={documentTemplateForm.isDefault ? "true" : "false"}
+                    onChange={(e) =>
+                      setDocumentTemplateForm({ ...documentTemplateForm, isDefault: e.target.value === "true" })
+                    }
+                  >
+                    <option value="false">No</option>
+                    <option value="true">Yes</option>
+                  </select>
+                </label>
+
+                <label>
+                  Active
+                  <select
+                    value={documentTemplateForm.isActive ? "true" : "false"}
+                    onChange={(e) =>
+                      setDocumentTemplateForm({ ...documentTemplateForm, isActive: e.target.value === "true" })
+                    }
+                  >
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                  </select>
+                </label>
+              </div>
+
+              <label>
+                Template HTML
+                <textarea
+                  value={documentTemplateForm.contentHtml}
+                  onChange={(e) => setDocumentTemplateForm({ ...documentTemplateForm, contentHtml: e.target.value })}
+                  placeholder="<section><h1>{{Title}}</h1></section>"
+                  rows={10}
+                />
+              </label>
+
+              <div className="auth-hint">
+                Supported template types: Quote, Contract, ScopeOfWork. Placeholder tokens are stored now and will be wired into generated documents in Phase 13b.
+              </div>
+
+              <div className="note-actions-row">
+                <button type="submit">
+                  {documentTemplateForm.id ? "Update Template" : "Create Template"}
+                </button>
+
+                <button type="button" onClick={() => setDocumentTemplateForm(emptyDocumentTemplateForm)}>
+                  Clear
+                </button>
+              </div>
+            </form>
+          </section>
+        </section>
+      )}
 
       <section className="account-grid">
         <section className="card">

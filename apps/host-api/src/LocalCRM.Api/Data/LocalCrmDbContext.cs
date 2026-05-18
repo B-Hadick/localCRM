@@ -17,6 +17,7 @@ public class LocalCrmDbContext : DbContext
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<Contract> Contracts => Set<Contract>();
     public DbSet<ScopeOfWork> ScopeOfWorks => Set<ScopeOfWork>();
+    public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -154,6 +155,19 @@ public class LocalCrmDbContext : DbContext
 
             entity.Property(x => x.EstimatedAmount)
                 .HasPrecision(18, 2);
+        });
+
+        modelBuilder.Entity<DocumentTemplate>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.HasIndex(x => x.DocumentType);
+            entity.HasIndex(x => x.IsDefault);
+            entity.HasIndex(x => x.IsActive);
+
+            entity.Property(x => x.Name).HasMaxLength(200);
+            entity.Property(x => x.DocumentType).HasMaxLength(50);
+            entity.Property(x => x.ContentHtml).HasMaxLength(20000);
         });
     }
 }

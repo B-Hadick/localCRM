@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -24,6 +24,9 @@ Quote/contract/scope-of-work linking
 Printable quote document workflow
 Printable contract document workflow
 Printable scope-of-work document workflow
+Document-template storage and management
+Template-backed printable document rendering
+Placeholder token replacement for generated documents
 Browser-printable HTML document generation
 Current-vs-requested approval review data
 Dashboard summary endpoint
@@ -61,6 +64,8 @@ Scope-of-work list/search/filter/sort workflow
 Scope-of-work status controls
 Customer-specific scope-of-work history
 Scope-of-work View / Print workflow
+Admin/Owner document-template management panel
+Template seeding, editing, activation/deactivation, and default selection
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -242,7 +247,7 @@ Browser print supports physical hard-copy printing
 Browser print dialog supports local “Save as PDF”
 Quote document generation is audit logged
 Printable quote document output uses safe HTML encoding for customer and quote fields
-Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
+Template-backed document rendering is available when active/default templates exist; DOCX/PDF generation remains planned for a later layer
 Contract Management
 Create contract records linked to customers
 Optionally link contracts to quote records
@@ -294,7 +299,7 @@ Browser print supports physical hard-copy printing
 Browser print dialog supports local “Save as PDF”
 Contract document generation is audit logged
 Printable contract document output uses safe HTML encoding for customer, quote, and contract fields
-Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
+Template-backed document rendering is available when active/default templates exist; DOCX/PDF generation remains planned for a later layer
 Scope of Work Management
 Create scope-of-work records linked to customers
 Optionally link scope-of-work records to quote records
@@ -350,7 +355,72 @@ Browser print supports physical hard-copy printing
 Browser print dialog supports local “Save as PDF”
 Scope-of-work document generation is audit logged
 Printable scope-of-work document output uses safe HTML encoding for customer, quote, contract, and scope-of-work fields
-Server-side DOCX/PDF generation and document template mapping remain planned for a later document-template layer
+Template-backed scope-of-work document output uses safe placeholder replacement when templates are active
+Hardcoded printable scope-of-work document layout remains available as fallback
+Document Template Management
+Create reusable document templates for Quote, Contract, and ScopeOfWork documents
+Store template name, document type, HTML template content, active state, and default state
+Seed default document templates for Quote, Contract, and ScopeOfWork
+Filter templates by document type
+Edit existing document templates
+Set active templates as the default for their document type
+Activate and deactivate templates
+Deactivate action clears default state for that template
+Admin/Owner-only template management UI
+Admin/Owner-only template management API
+Audit trail records template creation, update, default selection, activation, deactivation, and seeding
+Current template content is stored as HTML as the Phase 13 internal rendering foundation
+DOCX import/export remains planned for the later template import/export layer
+Template-backed Document Rendering
+Quote documents use active/default Quote templates when available
+Contract documents use active/default Contract templates when available
+Scope-of-work documents use active/default ScopeOfWork templates when available
+When no active/default template exists, document endpoints fall back to the existing hardcoded printable layouts
+Placeholder replacement engine supports reusable document tokens
+Supported common placeholder tokens include:
+`{{CustomerName}}`
+`{{CustomerEmail}}`
+`{{CustomerPhone}}`
+`{{CustomerAddress}}`
+`{{Title}}`
+`{{Description}}`
+`{{Status}}`
+`{{GeneratedDate}}`
+Supported quote placeholder tokens include:
+`{{QuoteNumber}}`
+`{{QuoteDate}}`
+`{{Amount}}`
+`{{SentDate}}`
+`{{AcceptedDate}}`
+`{{RejectedDate}}`
+`{{ExpiredDate}}`
+Supported contract placeholder tokens include:
+`{{ContractNumber}}`
+`{{ContractDate}}`
+`{{QuoteNumber}}`
+`{{QuoteStatus}}`
+`{{ScopeOfWorkId}}`
+`{{Amount}}`
+`{{SentDate}}`
+`{{SignedDate}}`
+`{{CompletedBillableDate}}`
+`{{CancelledDate}}`
+Supported scope-of-work placeholder tokens include:
+`{{ScopeNumber}}`
+`{{ScopeDate}}`
+`{{QuoteNumber}}`
+`{{QuoteStatus}}`
+`{{ContractNumber}}`
+`{{ContractStatus}}`
+`{{Deliverables}}`
+`{{Assumptions}}`
+`{{Exclusions}}`
+`{{EstimatedAmount}}`
+`{{ReviewedDate}}`
+`{{ApprovedDate}}`
+`{{ActivatedDate}}`
+`{{CompletedDate}}`
+`{{CancelledDate}}`
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -392,6 +462,11 @@ Audit entries for printable contract document generation
 Audit entries for scope-of-work creation
 Audit entries for scope-of-work status changes
 Audit entries for printable scope-of-work document generation
+Audit entries for document template creation
+Audit entries for document template updates
+Audit entries for document template default selection
+Audit entries for document template activation/deactivation
+Audit entries for default document template seeding
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -431,11 +506,15 @@ Scope-of-work filter/sort state
 Scope-of-work status action state
 Scope-of-work document opening state
 Customer scope-of-work history state
+Document template list state
+Document template filter state
+Document template create/edit form state
+Document template seed/default/active-state action state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
 Global audit review filter state
-Clear validation messages for customer, quote, contract, scope-of-work, note, login, Staff user, Admin user, password, audit, and edit request forms
+Clear validation messages for customer, quote, contract, scope-of-work, document-template, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -478,6 +557,14 @@ Scopes of Work
 `POST /scopes-of-work`
 `GET /scopes-of-work/{scopeId}/document`
 `POST /scopes-of-work/{scopeId}/status`
+Document Templates
+`GET /document-templates?documentType=&activeOnly=`
+`GET /document-templates/{templateId}`
+`POST /document-templates`
+`PUT /document-templates/{templateId}`
+`POST /document-templates/{templateId}/default`
+`POST /document-templates/{templateId}/active`
+`POST /document-templates/seed-defaults`
 Customer Edit Requests
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
@@ -528,6 +615,13 @@ Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `POST /quotes/{quoteId}/status`
 `POST /contracts/{contractId}/status`
 `POST /scopes-of-work/{scopeId}/status`
+`GET /document-templates?documentType=&activeOnly=`
+`GET /document-templates/{templateId}`
+`POST /document-templates`
+`PUT /document-templates/{templateId}`
+`POST /document-templates/{templateId}/default`
+`POST /document-templates/{templateId}/active`
+`POST /document-templates/seed-defaults`
 `GET /customer-edit-requests?status=&requestedBy=&from=&to=`
 `POST /customer-edit-requests/{requestId}/approve`
 `POST /customer-edit-requests/{requestId}/reject`
@@ -553,6 +647,9 @@ Optional quote-to-contract linking
 Quote/contract/scope-of-work linking design
 Automatic expiration logic
 Printable document generation from database records
+Template-backed document rendering
+Placeholder-token document generation
+Default template selection and fallback document rendering
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1150,6 +1247,132 @@ Confirm printable scope-of-work document opens in a new tab/window.
 Confirm the scope-of-work document includes customer, quote link, contract link, deliverables, assumptions, exclusions, estimated amount, and status dates.
 Confirm `GET /scopes-of-work` returns `HTTP/1.1 200 OK`.
 Confirm customer-specific scope-of-work history returns the customer’s scopes of work.
+✅ Phase 13 — Completed
+Phase 13 added database-backed document templates, Admin/Owner template management, default/active template workflow, and template-backed rendering for quote, contract, and scope-of-work printable documents.
+Implemented
+`DocumentTemplate` model
+`DocumentTemplates` database table
+EF Core migration for document templates
+`DbSet<DocumentTemplate>` and document-template model configuration
+Document template management endpoints:
+`GET /document-templates?documentType=&activeOnly=`
+`GET /document-templates/{templateId}`
+`POST /document-templates`
+`PUT /document-templates/{templateId}`
+`POST /document-templates/{templateId}/default`
+`POST /document-templates/{templateId}/active`
+`POST /document-templates/seed-defaults`
+Supported document types:
+`Quote`
+`Contract`
+`ScopeOfWork`
+Default document template seeding for:
+Quote templates
+Contract templates
+Scope-of-work templates
+Admin/Owner frontend Document Templates panel
+Template type filtering
+Template create/edit form
+Template HTML storage field
+Seed Defaults action
+Set Default action
+Activate/deactivate action
+Document template audit events:
+`DocumentTemplateCreated`
+`DocumentTemplateUpdated`
+`DocumentTemplateDefaultSet`
+`DocumentTemplateActivated`
+`DocumentTemplateDeactivated`
+`DocumentTemplateSeeded`
+Template lookup helper
+Active/default template selection
+Placeholder replacement engine
+Template-backed printable document wrapper
+Quote placeholder map
+Contract placeholder map
+Scope-of-work placeholder map
+Quote document endpoint uses active/default Quote template when available:
+`GET /quotes/{quoteId}/document`
+Contract document endpoint uses active/default Contract template when available:
+`GET /contracts/{contractId}/document`
+Scope-of-work document endpoint uses active/default ScopeOfWork template when available:
+`GET /scopes-of-work/{scopeId}/document`
+Existing hardcoded printable document layouts remain fallback when no active template is available
+Browser View / Print workflow remains intact
+DOCX template import/export remains planned for Phase 13c
+Server-side generated DOCX/PDF output files remain planned for Phase 13d
+Supported Placeholder Tokens
+Common:
+`{{CustomerName}}`
+`{{CustomerType}}`
+`{{CustomerEmail}}`
+`{{CustomerPhone}}`
+`{{CustomerAddress}}`
+`{{Title}}`
+`{{Description}}`
+`{{Status}}`
+`{{GeneratedDate}}`
+Quote:
+`{{QuoteId}}`
+`{{QuoteNumber}}`
+`{{QuoteDate}}`
+`{{Amount}}`
+`{{SentDate}}`
+`{{AcceptedDate}}`
+`{{RejectedDate}}`
+`{{ExpiredDate}}`
+Contract:
+`{{ContractId}}`
+`{{ContractNumber}}`
+`{{ContractDate}}`
+`{{QuoteId}}`
+`{{QuoteNumber}}`
+`{{QuoteStatus}}`
+`{{ScopeOfWorkId}}`
+`{{Amount}}`
+`{{SentDate}}`
+`{{SignedDate}}`
+`{{CompletedBillableDate}}`
+`{{CancelledDate}}`
+Scope of Work:
+`{{ScopeOfWorkId}}`
+`{{ScopeNumber}}`
+`{{ScopeDate}}`
+`{{QuoteId}}`
+`{{QuoteNumber}}`
+`{{QuoteStatus}}`
+`{{ContractId}}`
+`{{ContractNumber}}`
+`{{ContractStatus}}`
+`{{Deliverables}}`
+`{{Assumptions}}`
+`{{Exclusions}}`
+`{{EstimatedAmount}}`
+`{{ReviewedDate}}`
+`{{ApprovedDate}}`
+`{{ActivatedDate}}`
+`{{CompletedDate}}`
+`{{CancelledDate}}`
+Verified Flow
+Sign in as Owner or Admin.
+Confirm the Document Templates panel appears.
+Seed default templates.
+Confirm Quote, Contract, and ScopeOfWork templates are created.
+Create a custom Quote template.
+Edit the custom template.
+Set the custom Quote template as default.
+Open a quote with `View / Print`.
+Confirm the quote document uses the selected template body.
+Create or select a Contract template.
+Open a contract with `View / Print`.
+Confirm the contract document uses the selected template body.
+Create or select a ScopeOfWork template.
+Open a scope of work with `View / Print`.
+Confirm the scope-of-work document uses the selected template body.
+Deactivate a default template.
+Confirm the generated document falls back cleanly when no active template is available.
+Confirm Audit Review shows template events.
+Confirm existing quote, contract, and scope-of-work document workflows still work.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1330,6 +1553,50 @@ Query Global Audit by Entity Type
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "http://localhost:8080/audit?entityType=Customer"
+```
+Seed Default Document Templates
+```bash
+curl -i -X POST http://localhost:8080/document-templates/seed-defaults \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+List Document Templates
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/document-templates?documentType=All"
+```
+List Active Quote Templates
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/document-templates?documentType=Quote&activeOnly=true"
+```
+Create Custom Quote Template
+```bash
+curl -i -X POST http://localhost:8080/document-templates \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"name":"Custom Quote Template","documentType":"Quote","contentHtml":"<section><h1>Quote {{QuoteNumber}}</h1><p>{{CustomerName}}</p><p>{{Amount}}</p></section>","isDefault":true}'
+```
+Set Document Template as Default
+Replace `<TEMPLATE_ID>` with an actual template ID.
+```bash
+curl -i -X POST http://localhost:8080/document-templates/<TEMPLATE_ID>/default \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+Deactivate Document Template
+Replace `<TEMPLATE_ID>` with an actual template ID.
+```bash
+curl -i -X POST http://localhost:8080/document-templates/<TEMPLATE_ID>/active \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"isActive":false}'
+```
+Reactivate Document Template
+Replace `<TEMPLATE_ID>` with an actual template ID.
+```bash
+curl -i -X POST http://localhost:8080/document-templates/<TEMPLATE_ID>/active \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"isActive":true}'
 ```
 Create Quote
 Replace `<CUSTOMER_ID>` with an actual customer ID.
@@ -1620,11 +1887,17 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 13
-Document templates for quotes, contracts, and scope-of-work
-Server-side DOCX/PDF generation
-Document template mapping
-Quote/contract/scope-of-work attachment and document storage strategy
+Phase 13c:
+DOCX template import/export
+Import Word-created templates
+Export stored templates
+Preserve original DOCX template files
+Convert/extract template content as needed
+Phase 13d:
+Server-side generated output files
+Generate DOCX/PDF files from live CRM records
+Store generated output documents
+Attach generated documents to quotes/contracts/scope-of-work records
 Later Phases
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
@@ -1636,7 +1909,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 12 complete — Database-backed scopes of work, optional quote/contract linking, contract ScopeOfWorkId backfill, customer scope-of-work history, SOW search/filter/sort, SOW status workflow, printable SOW documents, SOW audit events, and frontend View / Print controls are working.
+Phase 13 complete — Database-backed document templates, Admin/Owner template management, template seeding, default/active template workflow, placeholder-token rendering, and template-backed quote/contract/scope-of-work printable documents are working.
 ```
 ---
 👤 Author
