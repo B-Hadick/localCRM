@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -27,9 +27,11 @@ Printable scope-of-work document workflow
 Document-template storage and management
 DOCX template import/export foundation
 Original template file storage and export
+Generated document file storage and download
 Template-backed printable document rendering
 Placeholder token replacement for generated documents
 Browser-printable HTML document generation
+Server-side generated HTML document file creation
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -68,6 +70,7 @@ Customer-specific scope-of-work history
 Scope-of-work View / Print workflow
 Admin/Owner document-template management panel
 Template seeding, editing, activation/deactivation, default selection, DOCX import, and template export
+Generated document file creation/download workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -131,6 +134,7 @@ Owner users can create scopes of work and manage scope-of-work statuses
 Owner users can view and print scope-of-work documents
 Owner users can manage document templates
 Owner users can import and export document templates
+Owner users can generate and download stored document files
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -144,6 +148,7 @@ Admin users can create scopes of work and manage scope-of-work statuses
 Admin users can view and print scope-of-work documents
 Admin users can manage document templates
 Admin users can import and export document templates
+Admin users can generate and download stored document files
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -172,6 +177,7 @@ Backend enforces Admin/Owner-only quote status updates
 Backend enforces Admin/Owner-only contract status updates
 Backend enforces Admin/Owner-only scope-of-work status updates
 Backend enforces Admin/Owner-only document-template import/export
+Backend stores generated document files from authenticated document-generation workflows
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -254,7 +260,7 @@ Browser print supports physical hard-copy printing
 Browser print dialog supports local “Save as PDF”
 Quote document generation is audit logged
 Printable quote document output uses safe HTML encoding for customer and quote fields
-Template-backed document rendering is available when active/default templates exist; DOCX/PDF generation remains planned for a later layer
+Template-backed document rendering is available when active/default templates exist; server-side generated HTML file storage is available; DOCX/PDF generation remains planned for a later layer
 Contract Management
 Create contract records linked to customers
 Optionally link contracts to quote records
@@ -306,7 +312,7 @@ Browser print supports physical hard-copy printing
 Browser print dialog supports local “Save as PDF”
 Contract document generation is audit logged
 Printable contract document output uses safe HTML encoding for customer, quote, and contract fields
-Template-backed document rendering is available when active/default templates exist; DOCX/PDF generation remains planned for a later layer
+Template-backed document rendering is available when active/default templates exist; server-side generated HTML file storage is available; DOCX/PDF generation remains planned for a later layer
 Scope of Work Management
 Create scope-of-work records linked to customers
 Optionally link scope-of-work records to quote records
@@ -364,6 +370,7 @@ Scope-of-work document generation is audit logged
 Printable scope-of-work document output uses safe HTML encoding for customer, quote, contract, and scope-of-work fields
 Template-backed scope-of-work document output uses safe placeholder replacement when templates are active
 Hardcoded printable scope-of-work document layout remains available as fallback
+Generated scope-of-work HTML files can be created and downloaded from stored generated-document records
 Document Template Management
 Create reusable document templates for Quote, Contract, and ScopeOfWork documents
 Store template name, document type, HTML template content, source format, original filename, original content type, original file bytes, imported timestamp, active state, and default state
@@ -434,6 +441,30 @@ Supported scope-of-work placeholder tokens include:
 `{{ActivatedDate}}`
 `{{CompletedDate}}`
 `{{CancelledDate}}`
+Generated Document Storage
+Create stored generated document files from Quote records
+Create stored generated document files from Contract records
+Create stored generated document files from ScopeOfWork records
+Generated document files currently store rendered HTML output
+Generated document records store:
+Document type
+Source entity type
+Source entity ID
+Template ID when template-backed
+File name
+Content type
+File bytes
+Generated by
+Generated date
+Created date
+Generated documents can be listed globally
+Generated documents can be filtered by source entity type
+Generated documents can be filtered by source entity ID
+Generated documents can be filtered by document type
+Generated documents can be downloaded as files
+Generated document creation is audit logged
+Generated document download is audit logged
+Existing browser View / Print workflow remains intact
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -482,6 +513,8 @@ Audit entries for document template activation/deactivation
 Audit entries for default document template seeding
 Audit entries for document template import
 Audit entries for document template export
+Audit entries for generated document creation
+Audit entries for generated document downloads
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -527,6 +560,9 @@ Document template create/edit form state
 Document template seed/default/active-state action state
 Document template import form state
 Document template export action state
+Generated document list state
+Generated document selected-source state
+Generated document create/download action state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
@@ -574,6 +610,12 @@ Scopes of Work
 `POST /scopes-of-work`
 `GET /scopes-of-work/{scopeId}/document`
 `POST /scopes-of-work/{scopeId}/status`
+Generated Documents
+`GET /generated-documents?sourceEntityType=&sourceEntityId=&documentType=`
+`GET /generated-documents/{generatedDocumentId}/download`
+`POST /quotes/{quoteId}/generated-documents`
+`POST /contracts/{contractId}/generated-documents`
+`POST /scopes-of-work/{scopeId}/generated-documents`
 Document Templates
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
@@ -619,6 +661,11 @@ Require a valid JWT bearer token:
 `GET /customers/{customerId}/scopes-of-work`
 `POST /scopes-of-work`
 `GET /scopes-of-work/{scopeId}/document`
+`GET /generated-documents?sourceEntityType=&sourceEntityId=&documentType=`
+`GET /generated-documents/{generatedDocumentId}/download`
+`POST /quotes/{quoteId}/generated-documents`
+`POST /contracts/{contractId}/generated-documents`
+`POST /scopes-of-work/{scopeId}/generated-documents`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -671,8 +718,10 @@ Printable document generation from database records
 Template-backed document rendering
 DOCX template import/export foundation
 Original file byte storage and file download workflow
+Generated file byte storage and generated document download workflow
 Placeholder-token document generation
 Default template selection and fallback document rendering
+Stored generated document artifact workflow
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1464,6 +1513,75 @@ Confirm Audit Review shows `DocumentTemplateImported`.
 Confirm Audit Review shows `DocumentTemplateExported`.
 Important Phase 13c Boundary
 Phase 13c stores and exports original DOCX templates. It does not yet render finished quote/contract/scope-of-work documents directly from DOCX files. Full DOCX-to-record rendering and generated output files are planned for the next document generation phase.
+✅ Phase 13d — Completed
+Phase 13d added stored generated document files for quote, contract, and scope-of-work records while preserving the existing browser View / Print workflow.
+Implemented
+`GeneratedDocument` model
+`GeneratedDocuments` database table
+EF Core migration for generated documents
+`DbSet<GeneratedDocument>` and generated-document model configuration
+Generated document metadata storage:
+`DocumentType`
+`SourceEntityType`
+`SourceEntityId`
+`TemplateId`
+`FileName`
+`ContentType`
+`FileBytes`
+`GeneratedBy`
+`GeneratedAtUtc`
+`CreatedAtUtc`
+Generated document list endpoint:
+`GET /generated-documents?sourceEntityType=&sourceEntityId=&documentType=`
+Generated document download endpoint:
+`GET /generated-documents/{generatedDocumentId}/download`
+Quote generated-document endpoint:
+`POST /quotes/{quoteId}/generated-documents`
+Contract generated-document endpoint:
+`POST /contracts/{contractId}/generated-documents`
+Scope-of-work generated-document endpoint:
+`POST /scopes-of-work/{scopeId}/generated-documents`
+Server-side generated HTML file creation
+Database-backed generated file byte storage
+Template ID tracking when generated from an active/default template
+Fallback layout tracking when no active/default template is used
+Generated document global listing
+Generated document download workflow
+Frontend `Generate File` buttons for quotes
+Frontend `Generate File` buttons for contracts
+Frontend `Generate File` buttons for scopes of work
+Frontend global Generated Documents panel
+Frontend generated document download buttons
+Generated document creation audit event:
+`GeneratedDocumentCreated`
+Generated document download audit event:
+`GeneratedDocumentDownloaded`
+Existing quote/contract/scope-of-work `View / Print` workflow remains intact
+Existing document-template workflow remains intact
+Existing DOCX template import/export workflow remains intact
+Verified Flow
+Sign in as Owner, Admin, or Staff.
+Create or select a quote.
+Click `Generate File`.
+Confirm a stored generated HTML document is created.
+Confirm the generated quote file appears in the Generated Documents panel.
+Download the generated quote file.
+Confirm the downloaded file opens as HTML.
+Create or select a contract.
+Click `Generate File`.
+Confirm a stored generated HTML document is created.
+Download the generated contract file.
+Create or select a scope of work.
+Click `Generate File`.
+Confirm a stored generated HTML document is created.
+Download the generated scope-of-work file.
+Confirm Audit Review shows `GeneratedDocumentCreated`.
+Confirm Audit Review shows `GeneratedDocumentDownloaded`.
+Confirm `View / Print` still opens browser-printable documents.
+Confirm template-backed rendering still works when active/default templates exist.
+Confirm fallback layouts still work when no active/default template exists.
+Important Phase 13d Boundary
+Phase 13d stores generated HTML output files. It establishes the generated-document artifact pipeline. Full DOCX/PDF generation from CRM records and imported DOCX templates remains planned for the next document generation layer.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1769,6 +1887,25 @@ Expected:
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
 ```
+Generate Stored Quote Document File
+Replace `<QUOTE_ID>` with an actual quote ID.
+```bash
+curl -i -X POST http://localhost:8080/quotes/<QUOTE_ID>/generated-documents \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+List Stored Generated Documents for Quote
+Replace `<QUOTE_ID>` with an actual quote ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/generated-documents?sourceEntityType=Quote&sourceEntityId=<QUOTE_ID>"
+```
+Download Stored Generated Document
+Replace `<GENERATED_DOCUMENT_ID>` with an actual generated document ID.
+```bash
+curl -L -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/generated-documents/<GENERATED_DOCUMENT_ID>/download \
+  --output generated-document.html
+```
 Create Contract
 Replace `<CUSTOMER_ID>` with an actual customer ID. Replace `<QUOTE_ID>` with an actual quote ID or use `null`.
 ```bash
@@ -1829,6 +1966,18 @@ Expected:
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
 ```
+Generate Stored Contract Document File
+Replace `<CONTRACT_ID>` with an actual contract ID.
+```bash
+curl -i -X POST http://localhost:8080/contracts/<CONTRACT_ID>/generated-documents \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+List Stored Generated Documents for Contract
+Replace `<CONTRACT_ID>` with an actual contract ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/generated-documents?sourceEntityType=Contract&sourceEntityId=<CONTRACT_ID>"
+```
 Create Scope of Work
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -1888,6 +2037,23 @@ Expected:
 ```text
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
+```
+Generate Stored Scope of Work Document File
+Replace `<SCOPE_ID>` with an actual scope-of-work ID.
+```bash
+curl -i -X POST http://localhost:8080/scopes-of-work/<SCOPE_ID>/generated-documents \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+List Stored Generated Documents for Scope of Work
+Replace `<SCOPE_ID>` with an actual scope-of-work ID.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/generated-documents?sourceEntityType=ScopeOfWork&sourceEntityId=<SCOPE_ID>"
+```
+List All Stored Generated Documents
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://localhost:8080/generated-documents"
 ```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
@@ -2006,12 +2172,10 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 13d:
-Server-side generated output files
+Phase 13e:
 Generate DOCX/PDF files from live CRM records
 Render stored DOCX templates against quote/contract/scope-of-work records
-Store generated output documents
-Attach generated documents to quotes/contracts/scope-of-work records
+Attach generated DOCX/PDF documents to quotes/contracts/scope-of-work records
 Later Phases
 Phase 14: Email workflow
 Phase 15: Calendar/ICS export
@@ -2023,7 +2187,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 13c complete — DOCX template import/export, original DOCX storage, HTML template export, source-format tracking, import/export audit events, and frontend import/export controls are working.
+Phase 13d complete — GeneratedDocument storage, server-side generated HTML files, generated document listing/download, quote/contract/scope-of-work Generate File actions, and generated-document audit events are working.
 ```
 ---
 👤 Author

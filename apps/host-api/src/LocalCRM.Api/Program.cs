@@ -1980,6 +1980,285 @@ app.MapPost("/scopes-of-work/{scopeId:guid}/status", async (
 }).RequireAuthorization("AdminOrOwner");
 
 
+
+app.MapGet("/generated-documents", async (
+    string? sourceEntityType,
+    Guid? sourceEntityId,
+    string? documentType,
+    LocalCrmDbContext db) =>
+{
+    var query = db.GeneratedDocuments.AsQueryable();
+
+    if (!string.IsNullOrWhiteSpace(sourceEntityType) && sourceEntityType != "All")
+    {
+        query = query.Where(document => document.SourceEntityType == sourceEntityType);
+    }
+
+    if (sourceEntityId.HasValue)
+    {
+        query = query.Where(document => document.SourceEntityId == sourceEntityId.Value);
+    }
+
+    if (!string.IsNullOrWhiteSpace(documentType) && documentType != "All")
+    {
+        query = query.Where(document => document.DocumentType == documentType);
+    }
+
+    var documents = await query
+        .OrderByDescending(document => document.GeneratedAtUtc)
+        .Take(250)
+        .Select(document => new GeneratedDocumentResponse(
+            document.Id,
+            document.DocumentType,
+            document.SourceEntityType,
+            document.SourceEntityId,
+            document.TemplateId,
+            document.FileName,
+            document.ContentType,
+            document.GeneratedBy,
+            document.GeneratedAtUtc,
+            document.CreatedAtUtc
+        ))
+        .ToListAsync();
+
+    return Results.Ok(documents);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/generated-documents/{generatedDocumentId:guid}/download", async (
+    Guid generatedDocumentId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var generatedDocument = await db.GeneratedDocuments.FindAsync(generatedDocumentId);
+    if (generatedDocument is null)
+    {
+        return Results.NotFound(new { error = "Generated document not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "GeneratedDocument",
+        EntityId = generatedDocument.Id.ToString(),
+        Action = "GeneratedDocumentDownloaded",
+        Details = $"Generated document '{generatedDocument.FileName}' downloaded for {generatedDocument.SourceEntityType} '{generatedDocument.SourceEntityId}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Generated document {FileName} downloaded by {PerformedBy}", generatedDocument.FileName, performedBy);
+
+    return Results.File(
+        generatedDocument.FileBytes,
+        generatedDocument.ContentType,
+        generatedDocument.FileName);
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/quotes/{quoteId:guid}/generated-documents", async (
+    Guid quoteId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var quote = await db.Quotes.FindAsync(quoteId);
+    if (quote is null)
+    {
+        return Results.NotFound(new { error = "Quote not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(quote.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var template = await GetDefaultDocumentTemplateAsync(db, "Quote");
+    var html = template is null
+        ? BuildQuoteDocumentHtml(quote, customer, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Quote",
+            template,
+            BuildQuoteTemplateValues(quote, customer, nowUtc),
+            nowUtc);
+
+    var generatedDocument = CreateGeneratedDocument(
+        "Quote",
+        "Quote",
+        quote.Id,
+        template?.Id,
+        quote.QuoteNumber,
+        html,
+        performedBy,
+        nowUtc);
+
+    db.GeneratedDocuments.Add(generatedDocument);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "GeneratedDocument",
+        EntityId = generatedDocument.Id.ToString(),
+        Action = "GeneratedDocumentCreated",
+        Details = $"Generated HTML file '{generatedDocument.FileName}' created for quote '{quote.QuoteNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Generated document {FileName} created for quote {QuoteNumber} by {PerformedBy}", generatedDocument.FileName, quote.QuoteNumber, performedBy);
+
+    return Results.Created($"/generated-documents/{generatedDocument.Id}", ToGeneratedDocumentResponse(generatedDocument));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/contracts/{contractId:guid}/generated-documents", async (
+    Guid contractId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var contract = await db.Contracts.FindAsync(contractId);
+    if (contract is null)
+    {
+        return Results.NotFound(new { error = "Contract not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(contract.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (contract.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(contract.QuoteId.Value);
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var template = await GetDefaultDocumentTemplateAsync(db, "Contract");
+    var html = template is null
+        ? BuildContractDocumentHtml(contract, customer, quote, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Contract",
+            template,
+            BuildContractTemplateValues(contract, customer, quote, nowUtc),
+            nowUtc);
+
+    var generatedDocument = CreateGeneratedDocument(
+        "Contract",
+        "Contract",
+        contract.Id,
+        template?.Id,
+        contract.ContractNumber,
+        html,
+        performedBy,
+        nowUtc);
+
+    db.GeneratedDocuments.Add(generatedDocument);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "GeneratedDocument",
+        EntityId = generatedDocument.Id.ToString(),
+        Action = "GeneratedDocumentCreated",
+        Details = $"Generated HTML file '{generatedDocument.FileName}' created for contract '{contract.ContractNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Generated document {FileName} created for contract {ContractNumber} by {PerformedBy}", generatedDocument.FileName, contract.ContractNumber, performedBy);
+
+    return Results.Created($"/generated-documents/{generatedDocument.Id}", ToGeneratedDocumentResponse(generatedDocument));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapPost("/scopes-of-work/{scopeId:guid}/generated-documents", async (
+    Guid scopeId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+
+    var scopeOfWork = await db.ScopeOfWorks.FindAsync(scopeId);
+    if (scopeOfWork is null)
+    {
+        return Results.NotFound(new { error = "Scope of work not found" });
+    }
+
+    var customer = await db.Customers.FindAsync(scopeOfWork.CustomerId);
+    if (customer is null)
+    {
+        return Results.NotFound(new { error = "Customer not found" });
+    }
+
+    Quote? quote = null;
+    if (scopeOfWork.QuoteId.HasValue)
+    {
+        quote = await db.Quotes.FindAsync(scopeOfWork.QuoteId.Value);
+    }
+
+    Contract? contract = null;
+    if (scopeOfWork.ContractId.HasValue)
+    {
+        contract = await db.Contracts.FindAsync(scopeOfWork.ContractId.Value);
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var template = await GetDefaultDocumentTemplateAsync(db, "ScopeOfWork");
+    var html = template is null
+        ? BuildScopeOfWorkDocumentHtml(scopeOfWork, customer, quote, contract, nowUtc)
+        : BuildTemplateBackedPrintableDocumentHtml(
+            "Scope of Work",
+            template,
+            BuildScopeOfWorkTemplateValues(scopeOfWork, customer, quote, contract, nowUtc),
+            nowUtc);
+
+    var generatedDocument = CreateGeneratedDocument(
+        "ScopeOfWork",
+        "ScopeOfWork",
+        scopeOfWork.Id,
+        template?.Id,
+        scopeOfWork.ScopeNumber,
+        html,
+        performedBy,
+        nowUtc);
+
+    db.GeneratedDocuments.Add(generatedDocument);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "GeneratedDocument",
+        EntityId = generatedDocument.Id.ToString(),
+        Action = "GeneratedDocumentCreated",
+        Details = $"Generated HTML file '{generatedDocument.FileName}' created for scope of work '{scopeOfWork.ScopeNumber}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Generated document {FileName} created for scope of work {ScopeNumber} by {PerformedBy}", generatedDocument.FileName, scopeOfWork.ScopeNumber, performedBy);
+
+    return Results.Created($"/generated-documents/{generatedDocument.Id}", ToGeneratedDocumentResponse(generatedDocument));
+}).RequireAuthorization("AuthenticatedUser");
+
 app.MapGet("/document-templates", async (
     string? documentType,
     bool? activeOnly,
@@ -2702,6 +2981,53 @@ app.Run();
 
 
 
+
+
+static GeneratedDocument CreateGeneratedDocument(
+    string documentType,
+    string sourceEntityType,
+    Guid sourceEntityId,
+    Guid? templateId,
+    string sourceNumber,
+    string html,
+    string generatedBy,
+    DateTime nowUtc)
+{
+    var safeSourceNumber = MakeSafeFileName(sourceNumber);
+    var timestamp = nowUtc.ToString("yyyyMMdd-HHmmss");
+    var fileName = $"{documentType}-{safeSourceNumber}-{timestamp}.html";
+
+    return new GeneratedDocument
+    {
+        Id = Guid.NewGuid(),
+        DocumentType = documentType,
+        SourceEntityType = sourceEntityType,
+        SourceEntityId = sourceEntityId,
+        TemplateId = templateId,
+        FileName = fileName,
+        ContentType = "text/html; charset=utf-8",
+        FileBytes = Encoding.UTF8.GetBytes(html),
+        GeneratedBy = generatedBy,
+        GeneratedAtUtc = nowUtc,
+        CreatedAtUtc = nowUtc
+    };
+}
+
+static GeneratedDocumentResponse ToGeneratedDocumentResponse(GeneratedDocument document)
+{
+    return new GeneratedDocumentResponse(
+        document.Id,
+        document.DocumentType,
+        document.SourceEntityType,
+        document.SourceEntityId,
+        document.TemplateId,
+        document.FileName,
+        document.ContentType,
+        document.GeneratedBy,
+        document.GeneratedAtUtc,
+        document.CreatedAtUtc
+    );
+}
 
 static async Task<DocumentTemplate?> GetDefaultDocumentTemplateAsync(LocalCrmDbContext db, string documentType)
 {
@@ -4516,6 +4842,20 @@ static bool IsValidEmail(string email)
 
 
 
+
+
+public record GeneratedDocumentResponse(
+    Guid Id,
+    string DocumentType,
+    string SourceEntityType,
+    Guid SourceEntityId,
+    Guid? TemplateId,
+    string FileName,
+    string ContentType,
+    string GeneratedBy,
+    DateTime GeneratedAtUtc,
+    DateTime CreatedAtUtc
+);
 
 public record CreateDocumentTemplateRequest(
     string Name,

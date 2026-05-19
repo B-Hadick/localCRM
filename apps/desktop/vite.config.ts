@@ -54,6 +54,10 @@ export default defineConfig({
       "/document-templates": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/generated-documents": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }

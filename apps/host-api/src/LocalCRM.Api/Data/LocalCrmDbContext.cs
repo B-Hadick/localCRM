@@ -18,6 +18,7 @@ public class LocalCrmDbContext : DbContext
     public DbSet<Contract> Contracts => Set<Contract>();
     public DbSet<ScopeOfWork> ScopeOfWorks => Set<ScopeOfWork>();
     public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
+    public DbSet<GeneratedDocument> GeneratedDocuments => Set<GeneratedDocument>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -174,6 +175,24 @@ public class LocalCrmDbContext : DbContext
             entity.Property(x => x.SourceFormat).HasMaxLength(50);
             entity.Property(x => x.OriginalFileName).HasMaxLength(255);
             entity.Property(x => x.OriginalContentType).HasMaxLength(150);
+        });
+
+        modelBuilder.Entity<GeneratedDocument>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.HasIndex(x => x.DocumentType);
+            entity.HasIndex(x => x.SourceEntityType);
+            entity.HasIndex(x => x.SourceEntityId);
+            entity.HasIndex(x => x.TemplateId);
+            entity.HasIndex(x => x.GeneratedAtUtc);
+            entity.HasIndex(x => x.GeneratedBy);
+
+            entity.Property(x => x.DocumentType).HasMaxLength(50);
+            entity.Property(x => x.SourceEntityType).HasMaxLength(50);
+            entity.Property(x => x.FileName).HasMaxLength(255);
+            entity.Property(x => x.ContentType).HasMaxLength(150);
+            entity.Property(x => x.GeneratedBy).HasMaxLength(200);
         });
     }
 }
