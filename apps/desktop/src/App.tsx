@@ -341,6 +341,15 @@ type EmailDraftForm = {
   bcc: string;
   subject: string;
   body: string;
+  isHtml: boolean;
+  generatedDocumentId: string;
+};
+
+type SendEmailResponse = {
+  sent: boolean;
+  message: string;
+  generatedDocumentId: string | null;
+  attachedFileName: string;
 };
 
 const emptyCustomerForm: CustomerForm = {
@@ -479,7 +488,9 @@ const emptyEmailDraftForm: EmailDraftForm = {
   cc: "",
   bcc: "",
   subject: "",
-  body: ""
+  body: "",
+  isHtml: false,
+  generatedDocumentId: ""
 };
 
 const emptyDashboardSummary: DashboardSummary = {
@@ -579,6 +590,22 @@ function App() {
   const maskedEmailPassword = emailConfigForm.password
     ? "Password set for this session"
     : "No password set";
+
+  const emailAttachableDocuments = useMemo(() => {
+    const byId = new Map<string, GeneratedDocument>();
+
+    for (const document of generatedDocuments) {
+      byId.set(document.id, document);
+    }
+
+    for (const document of selectedSourceGeneratedDocuments) {
+      byId.set(document.id, document);
+    }
+
+    return Array.from(byId.values()).sort(
+      (left, right) => new Date(right.generatedAtUtc).getTime() - new Date(left.generatedAtUtc).getTime()
+    );
+  }, [generatedDocuments, selectedSourceGeneratedDocuments]);
 
   function setStatus(message: string, type: "info" | "success" | "error" = "info") {
     setStatusMessage(message);
@@ -829,6 +856,14 @@ function App() {
 
     if (!input.body.trim()) {
       return "Email body is required.";
+    }
+
+    if (input.generatedDocumentId) {
+      const documentExists = emailAttachableDocuments.some((document) => document.id === input.generatedDocumentId);
+
+      if (!documentExists) {
+        return "Selected generated document attachment is not available in the current generated-document lists.";
+      }
     }
 
     return "";
@@ -2389,6 +2424,29 @@ function App() {
     }
   }
 
+  function addGeneratedDocumentToLocalState(generatedDocument: GeneratedDocument) {
+    setGeneratedDocuments((current) => {
+      const withoutDuplicate = current.filter((document) => document.id !== generatedDocument.id);
+      return [generatedDocument, ...withoutDuplicate];
+    });
+
+    setSelectedSourceGeneratedDocuments((current) => {
+      const withoutDuplicate = current.filter((document) => document.id !== generatedDocument.id);
+      return [generatedDocument, ...withoutDuplicate];
+    });
+  }
+
+  function attachNewGeneratedDocumentToDraft(generatedDocument: GeneratedDocument) {
+    setEmailDraftForm((current) => ({
+      ...current,
+      generatedDocumentId: generatedDocument.id,
+      subject: current.subject || `${generatedDocument.documentType} document: ${generatedDocument.fileName}`,
+      body:
+        current.body ||
+        `Please see the attached ${generatedDocument.documentType.toLowerCase()} document.`
+    }));
+  }
+
   async function generateQuoteDocumentFile(quoteId: string) {
     if (!currentUser) {
       setStatus("Sign in before generating quote files.", "error");
@@ -2412,7 +2470,9 @@ function App() {
       }
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
-      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      addGeneratedDocumentToLocalState(generatedDocument);
+      attachNewGeneratedDocumentToDraft(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("Quote", quoteId);
 
@@ -2604,7 +2664,9 @@ function App() {
       }
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
-      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      addGeneratedDocumentToLocalState(generatedDocument);
+      attachNewGeneratedDocumentToDraft(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("Contract", contractId);
 
@@ -2801,7 +2863,9 @@ function App() {
       }
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
-      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      addGeneratedDocumentToLocalState(generatedDocument);
+      attachNewGeneratedDocumentToDraft(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("ScopeOfWork", scopeId);
 
@@ -2931,6 +2995,14 @@ function App() {
                 <button type="button" onClick={() => downloadGeneratedDocument(document)}>
                   Download
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => attachGeneratedDocumentToEmail(document)}
+                  disabled={!emailConfigSavedForSession}
+                >
+                  Attach to Email
+                </button>
               </div>
             </div>
           ))
@@ -2973,26 +3045,115 @@ function App() {
     setStatus("Session email settings cleared.", "info");
   }
 
-  function handleEmailDraftSave(event: FormEvent) {
+  function attachGeneratedDocumentToEmail(generatedDocument: GeneratedDocument) {
+    setEmailDraftForm((current) => ({
+      ...current,
+      generatedDocumentId: generatedDocument.id,
+      subject: current.subject || `${generatedDocument.documentType} document: ${generatedDocument.fileName}`,
+      body:
+        current.body ||
+        `Please see the attached ${generatedDocument.documentType.toLowerCase()} document.`
+    }));
+
+    setStatus(`Attached "${generatedDocument.fileName}" to the local email draft.`, "success");
+  }
+
+  function getSelectedEmailAttachmentName() {
+    if (!emailDraftForm.generatedDocumentId) {
+      return "No generated document selected";
+    }
+
+    const selectedDocument = emailAttachableDocuments.find((document) => document.id === emailDraftForm.generatedDocumentId);
+    return selectedDocument?.fileName ?? "Selected generated document not found";
+  }
+
+  async function handleEmailDraftSave(event: FormEvent) {
     event.preventDefault();
 
     if (!currentUser) {
-      setStatus("Sign in before preparing email drafts.", "error");
+      setStatus("Sign in before sending email.", "error");
       return;
     }
 
     if (!emailConfigSavedForSession) {
-      setStatus("Save session email settings before preparing an email draft.", "error");
+      setStatus("Save session email settings before sending email.", "error");
       return;
     }
 
-    const validationError = validateEmailDraftForm(emailDraftForm);
-    if (validationError) {
-      setStatus(validationError, "error");
+    const configValidationError = validateEmailConfigForm(emailConfigForm);
+    if (configValidationError) {
+      setStatus(configValidationError, "error");
       return;
     }
 
-    setStatus("Email draft prepared locally for this session. Backend sending will be wired in Phase 14b.", "success");
+    const draftValidationError = validateEmailDraftForm(emailDraftForm);
+    if (draftValidationError) {
+      setStatus(draftValidationError, "error");
+      return;
+    }
+
+    setStatus("Sending email...", "info");
+
+    try {
+      const response = await fetch("/email/send", {
+        method: "POST",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          smtpHost: emailConfigForm.smtpHost.trim(),
+          smtpPort: Number(emailConfigForm.smtpPort),
+          useTls: emailConfigForm.useTls,
+          fromEmail: emailConfigForm.fromEmail.trim(),
+          fromDisplayName: emailConfigForm.fromDisplayName.trim(),
+          username: emailConfigForm.username.trim(),
+          password: emailConfigForm.password,
+          to: emailDraftForm.to.trim(),
+          cc: emailDraftForm.cc.trim(),
+          bcc: emailDraftForm.bcc.trim(),
+          subject: emailDraftForm.subject.trim(),
+          body: emailDraftForm.body,
+          isHtml: emailDraftForm.isHtml,
+          generatedDocumentId: emailDraftForm.generatedDocumentId || null
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const result = (await response.json()) as SendEmailResponse;
+
+      setEmailDraftForm(emptyEmailDraftForm);
+      setStatus(
+        result.attachedFileName
+          ? `Email sent successfully with attachment "${result.attachedFileName}".`
+          : "Email sent successfully.",
+        "success"
+      );
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to send email.", "error");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    }
   }
 
   async function handleDocumentTemplateSubmit(event: FormEvent) {
@@ -3738,7 +3899,7 @@ function App() {
             </div>
 
             <div className="auth-hint">
-              Phase 14a keeps email settings in memory only. They are not saved to localStorage, not saved to PostgreSQL, and clear on logout/session expiration/page refresh.
+              Phase 14b keeps email settings in memory only. They are not saved to localStorage, not saved to PostgreSQL, and clear on logout/session expiration/page refresh.
             </div>
 
             <div className="note-actions-row">
@@ -3753,7 +3914,7 @@ function App() {
 
         <section className="card">
           <div className="section-header compact-header">
-            <h2>Email Draft Prep</h2>
+            <h2>Email Send</h2>
             <span className="status-chip status-chip-active">Phase 14a</span>
           </div>
 
@@ -3794,6 +3955,39 @@ function App() {
                   placeholder="Quote / Contract / Scope of Work"
                 />
               </label>
+
+              <label>
+                Body Format
+                <select
+                  value={emailDraftForm.isHtml ? "html" : "text"}
+                  onChange={(e) => setEmailDraftForm({ ...emailDraftForm, isHtml: e.target.value === "html" })}
+                >
+                  <option value="text">Plain Text</option>
+                  <option value="html">HTML</option>
+                </select>
+              </label>
+
+              <label>
+                Generated Document Attachment
+                <select
+                  value={emailDraftForm.generatedDocumentId}
+                  onChange={(e) =>
+                    setEmailDraftForm({ ...emailDraftForm, generatedDocumentId: e.target.value })
+                  }
+                >
+                  <option value="">No Attachment</option>
+                  {emailAttachableDocuments.map((document) => (
+                    <option key={document.id} value={document.id}>
+                      {document.documentType} · {document.fileName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Selected Attachment
+                <input value={getSelectedEmailAttachmentName()} readOnly />
+              </label>
             </div>
 
             <label>
@@ -3807,12 +4001,16 @@ function App() {
             </label>
 
             <div className="auth-hint">
-              This draft is local-only in Phase 14a. Actual backend sending and generated-document attachment selection will be wired in Phase 14b/14c.
+              Phase 14b sends through the backend using session-only SMTP settings. Settings are sent only with this explicit send request and are not persisted by the CRM.
             </div>
 
             <div className="note-actions-row">
               <button type="submit" disabled={!emailConfigSavedForSession}>
-                Prepare Draft
+                Send Email
+              </button>
+
+              <button type="button" onClick={() => loadGeneratedDocuments()}>
+                Refresh Attachments
               </button>
 
               <button type="button" onClick={() => setEmailDraftForm(emptyEmailDraftForm)}>

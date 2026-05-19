@@ -58,6 +58,10 @@ export default defineConfig({
       "/generated-documents": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/email": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }

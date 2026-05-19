@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, backend SMTP email sending, generated-document email attachments, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -33,7 +33,9 @@ Placeholder token replacement for generated documents
 Browser-printable HTML document generation
 Server-side generated HTML document file creation
 Session-only email workflow configuration
-Local-only email draft preparation
+Backend SMTP email sending with session-supplied settings
+Generated-document email attachment workflow
+Local email draft preparation
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -74,7 +76,8 @@ Admin/Owner document-template management panel
 Template seeding, editing, activation/deactivation, default selection, DOCX import, and template export
 Generated document file creation/download workflow
 Session-only email settings workflow
-Local-only email draft preparation workflow
+Backend email send workflow
+Generated-document email attachment workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -86,7 +89,8 @@ Admin/Owner Staff password reset panel
 Owner-only Admin creation panel
 Admin/Owner global audit review panel
 Session-only email workflow settings panel
-Local-only email draft preparation panel
+Email send panel
+Generated-document attachment selection
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -141,7 +145,7 @@ Owner users can view and print scope-of-work documents
 Owner users can manage document templates
 Owner users can import and export document templates
 Owner users can generate and download stored document files
-Owner users can configure session-only email workflow settings
+Owner users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -156,7 +160,7 @@ Admin users can view and print scope-of-work documents
 Admin users can manage document templates
 Admin users can import and export document templates
 Admin users can generate and download stored document files
-Admin users can configure session-only email workflow settings
+Admin users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -170,7 +174,7 @@ Staff users can view and print contract documents
 Staff users can create scopes of work
 Staff users can view scope-of-work records
 Staff users can view and print scope-of-work documents
-Staff users can configure session-only email workflow settings
+Staff users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
 Staff users cannot manage quote, contract, or scope-of-work status transitions
@@ -474,7 +478,7 @@ Generated documents can be downloaded as files
 Generated document creation is audit logged
 Generated document download is audit logged
 Existing browser View / Print workflow remains intact
-Session-only Email Workflow Configuration
+Session-only Email Workflow Configuration and Sending
 Configure SMTP host, port, TLS setting, From email, display name, username, and password in the CRM UI
 Email settings are stored only in React memory state
 Email settings are not saved to PostgreSQL
@@ -482,11 +486,20 @@ Email settings are not saved to browser localStorage
 Email settings clear on logout
 Email settings clear on session expiration
 Email settings clear on page refresh
-SMTP password is held only in frontend session state for Phase 14a
-Email draft preparation supports To, CC, BCC, subject, and body fields
-Email draft validation checks recipient email format, subject, and body
-Email draft data is local-only in Phase 14a
-No backend email sending occurs in Phase 14a
+SMTP password is held only in frontend session state
+SMTP settings are sent to the backend only when the user explicitly clicks `Send Email`
+Backend email send endpoint accepts SMTP settings only in the request body
+Backend does not persist SMTP host, username, password, sender, recipient fields, or message body
+Email send workflow supports To, CC, BCC, subject, body, and plain-text/HTML mode
+Email send validation checks SMTP config, sender, recipient email format, subject, body, and attachment ID
+Generated documents can be attached to outbound email by `GeneratedDocumentId`
+Generated document file bytes are loaded from the existing GeneratedDocuments table for attachment
+Newly generated quote/contract/scope-of-work files auto-attach to the email draft
+Generated document attachment dropdown can be refreshed
+Email send success is audit logged
+Email send failure is audit logged
+Email validation failure is audit logged
+Audit events do not expose SMTP passwords, usernames, full recipient lists, or message bodies
 Production persistent per-user email configuration remains planned for a later shippable-product layer
 Search & Filtering
 Backend-backed customer search
@@ -538,6 +551,9 @@ Audit entries for document template import
 Audit entries for document template export
 Audit entries for generated document creation
 Audit entries for generated document downloads
+Audit entries for email send success
+Audit entries for email send failure
+Audit entries for email send validation failure
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -587,9 +603,10 @@ Generated document list state
 Generated document selected-source state
 Generated document create/download action state
 Session-only email configuration state
-Local-only email draft state
+Email draft/send state
+Generated-document email attachment state
 Email configuration validation state
-Email draft validation state
+Email send validation state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
@@ -643,6 +660,8 @@ Generated Documents
 `POST /quotes/{quoteId}/generated-documents`
 `POST /contracts/{contractId}/generated-documents`
 `POST /scopes-of-work/{scopeId}/generated-documents`
+Email
+`POST /email/send`
 Document Templates
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
@@ -693,6 +712,7 @@ Require a valid JWT bearer token:
 `POST /quotes/{quoteId}/generated-documents`
 `POST /contracts/{contractId}/generated-documents`
 `POST /scopes-of-work/{scopeId}/generated-documents`
+`POST /email/send`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -749,8 +769,10 @@ Generated file byte storage and generated document download workflow
 Placeholder-token document generation
 Default template selection and fallback document rendering
 Stored generated document artifact workflow
+Generated artifact email delivery workflow
 Session-only sensitive configuration workflow
-Local-only email draft preparation workflow
+Session-supplied SMTP email sending workflow
+Generated-document email attachment workflow
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1673,7 +1695,7 @@ Confirm email draft data is cleared.
 Refresh the browser.
 Confirm session-only email settings do not persist.
 Important Phase 14a Boundary
-Phase 14a does not send email yet. Next planned work is Phase 14b backend session-only email sending, followed by Phase 14c frontend generated-document email sending.
+Phase 14a created the session-only configuration foundation. Phase 14b now sends email through backend SMTP using session-supplied settings. Phase 14c will refine the email send workflow around selected customers and document context.
 Phase 14 Roadmap
 Phase 14a:
 Session-only email workflow configuration UI
@@ -1686,12 +1708,101 @@ Session-supplied SMTP settings only
 Generated-document attachment support
 Email send audit events without secret exposure
 No SMTP credential persistence
+Completed
 Phase 14c:
-Frontend email send workflow
-Generated-document selection
-Recipient/subject/body workflow
-Send generated quote/contract/scope-of-work files by email through session-only settings
-Clear settings and draft state on logout/session expiration/page refresh
+Frontend email workflow refinement
+Pre-fill recipient from selected customer email when available
+Pre-fill subject/body from selected quote, contract, scope-of-work, or generated document context
+Improve selected-document send flow
+Keep session-only SMTP security boundary intact
+✅ Phase 14b — Completed
+Phase 14b added backend session-only SMTP email sending and wired the frontend email workflow to send generated document artifacts without persisting credentials.
+Implemented
+MailKit package added to the API project
+MimeKit email message construction
+Backend email send endpoint:
+`POST /email/send`
+Vite proxy support for:
+`/email`
+Session-supplied SMTP settings only
+No PostgreSQL persistence for SMTP host
+No PostgreSQL persistence for SMTP username
+No PostgreSQL persistence for SMTP password
+No PostgreSQL persistence for sender configuration
+No PostgreSQL persistence for recipient fields
+No PostgreSQL persistence for message body
+SMTP settings accepted only inside explicit email send requests
+Plain-text email body support
+HTML email body support
+To recipient support
+CC recipient support
+BCC recipient support
+From email support
+From display name support
+SMTP username/password authentication support
+TLS/StartTLS send configuration support
+Generated-document attachment support through:
+`GeneratedDocumentId`
+Generated document file bytes loaded from the existing `GeneratedDocuments` table
+Generated document filename/content type preserved for attachments
+Backend validation for:
+SMTP host
+SMTP port
+From email
+To recipients
+CC recipients
+BCC recipients
+Subject
+Body
+Total recipient count
+Generated document attachment ID
+Frontend email send workflow wired to:
+`POST /email/send`
+Frontend plain-text/HTML body selector
+Frontend generated-document attachment selector
+Frontend selected attachment display
+Frontend `Attach to Email` action on generated documents
+Frontend `Refresh Attachments` action
+Newly generated quote files auto-attach to the email draft
+Newly generated contract files auto-attach to the email draft
+Newly generated scope-of-work files auto-attach to the email draft
+Email send success status handling
+Email send failure status handling
+Audit refresh after send attempts for Admin/Owner users
+Email send success audit event:
+`EmailSent`
+Email send failure audit event:
+`EmailSendFailed`
+Email validation failure audit event:
+`EmailSendValidationFailed`
+Security Boundary
+Phase 14b does not persist SMTP credentials.
+Phase 14b does not persist SMTP host, sender, username, password, recipients, or message body.
+SMTP settings remain session-only frontend state.
+SMTP settings are sent to the backend only when the user explicitly clicks `Send Email`.
+Audit entries avoid SMTP passwords, usernames, full recipient lists, and message bodies.
+Production persistent email linking remains planned for a later shippable-product layer with secure per-user configuration storage.
+Verified Flow
+Install the MailKit package in the API project.
+Build and run the backend.
+Sign in as Owner, Admin, or Staff.
+Open Email Workflow Settings.
+Enter SMTP host, SMTP port, TLS option, From email, optional display name, username, and password/app password.
+Click `Save Email Settings for Session`.
+Generate a quote, contract, or scope-of-work file.
+Confirm the generated file auto-attaches to the email draft.
+Alternatively, click `Attach to Email` from the Generated Documents panel.
+Confirm the generated document appears in the attachment selector.
+Fill To, optional CC/BCC, subject, and body.
+Choose plain-text or HTML body mode.
+Click `Send Email`.
+Confirm success or provider-specific failure feedback appears.
+Confirm Audit Review shows `EmailSent` on success.
+Confirm Audit Review shows `EmailSendFailed` on provider/send failure.
+Confirm Audit Review shows `EmailSendValidationFailed` on validation failure.
+Confirm logout/session expiration/page refresh clears email settings and draft state.
+Important Phase 14b Boundary
+Phase 14b sends email but still uses session-only SMTP settings. It does not implement persistent per-user email account linking. Persistent Owner/Admin-managed email configuration remains a later production-hardening layer.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1702,6 +1813,7 @@ docker compose -f .devcontainer/docker-compose.yml up -d postgres
 Start the Backend API
 ```bash
 cd apps/host-api/src/LocalCRM.Api
+dotnet restore
 dotnet run --urls=http://0.0.0.0:8080
 ```
 Expected backend port:
@@ -1762,17 +1874,28 @@ STAFF_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -d '{"email":"staff@localcrm.dev","password":"Staff123!"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ```
-Manual Phase 14a Email Workflow Check
+Manual Phase 14b Email Workflow Check
 ```text
 1. Sign in through the frontend.
 2. Fill out Email Workflow Settings.
 3. Click Save Email Settings for Session.
-4. Confirm the panel shows Session Ready.
-5. Fill out Email Draft Prep.
-6. Click Prepare Draft.
-7. Sign out.
-8. Sign back in and confirm email settings and draft fields are cleared.
-9. Refresh the browser and confirm SMTP settings do not persist.
+4. Generate a quote, contract, or scope-of-work file.
+5. Confirm the generated file auto-attaches to the email draft.
+6. Fill To, optional CC/BCC, subject, and body.
+7. Choose Plain Text or HTML body mode.
+8. Click Send Email.
+9. Confirm success or provider-specific failure feedback.
+10. Sign out and sign back in.
+11. Confirm email settings and draft fields are cleared.
+12. Refresh the browser and confirm SMTP settings do not persist.
+```
+Validate Email Send Endpoint Without Real SMTP
+Expected result is `400 Bad Request` because SMTP host is intentionally blank.
+```bash
+curl -i -X POST http://localhost:8080/email/send \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"smtpHost":"","smtpPort":587,"useTls":true,"fromEmail":"sender@example.com","fromDisplayName":"LocalCRM","username":"","password":"","to":"recipient@example.com","cc":"","bcc":"","subject":"Test","body":"Hello","isHtml":false,"generatedDocumentId":null}'
 ```
 Confirm Customers Require Auth
 ```bash
@@ -2294,28 +2417,25 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 14b:
-Backend session-only email send endpoint
-Accept SMTP/email configuration only inside an explicit send request
-Do not persist SMTP host, username, password, sender configuration, recipient fields, or message body
-Send plain-text/HTML email from session-supplied SMTP settings
-Support optional generated-document attachment by `GeneratedDocumentId`
-Load generated-document file bytes from the existing GeneratedDocuments table when attaching files
-Validate recipient, subject, body, SMTP host, SMTP port, sender, and attachment ID
-Audit email send success/failure without exposing SMTP passwords, usernames, recipient secrets, or message body contents
-Return safe success/failure responses to the frontend
 Phase 14c:
-Frontend generated-document email send workflow
-Use Phase 14a session-only email settings as the send configuration source
+Frontend email workflow refinement
+Use Phase 14a/14b session-only email settings as the send configuration source
 Select a generated quote, contract, or scope-of-work document for emailing
 Pre-fill recipient from selected customer email when available
 Pre-fill subject/body from selected document context when available
-Attach selected generated document to email send request
-Send quote/contract/scope-of-work artifacts through session-only email settings
+Improve selected-document attachment flow
 Show send success/failure state in the UI
 Refresh Audit Review after send attempts for Admin/Owner users
 Keep SMTP credentials in frontend memory only
 Clear email settings and draft state on logout/session expiration/page refresh
+Later Phase:
+Production email configuration hardening
+Owner/Admin per-user email workflow setup
+Persistent email configuration with secure storage
+Encrypted secrets or external secrets provider integration
+Per-user send configuration without repeatedly entering SMTP credentials
+Later Phase:
+DOCX/PDF generated output expansion
 Later Phases
 Phase 15: Calendar/ICS export
 Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
@@ -2326,7 +2446,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 14a complete — Session-only email workflow settings, local-only email draft preparation, email validation, and no-persistence credential handling are working. Next planned work is Phase 14b backend email sending with session-supplied SMTP settings.
+Phase 14b complete — Backend session-only SMTP email sending, generated-document attachments, frontend Send Email workflow, attachment refresh/auto-attach behavior, and email send audit events are working.
 ```
 ---
 👤 Author

@@ -10,6 +10,9 @@ using Microsoft.IdentityModel.Tokens;
 using LocalCRM.Api.Data;
 using LocalCRM.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using MailKit.Net.Smtp;
+using MailKit.Security;
+using MimeKit;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -1981,6 +1984,162 @@ app.MapPost("/scopes-of-work/{scopeId:guid}/status", async (
 
 
 
+
+app.MapPost("/email/send", async (
+    SendEmailRequest input,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var nowUtc = DateTime.UtcNow;
+
+    var validationError = await ValidateSendEmailRequestAsync(input, db);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Email",
+            EntityId = input.GeneratedDocumentId?.ToString() ?? "",
+            Action = "EmailSendValidationFailed",
+            Details = $"Email send validation failed. Reason: {validationError}",
+            PerformedBy = performedBy,
+            CreatedAtUtc = nowUtc
+        });
+
+        await db.SaveChangesAsync();
+
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    GeneratedDocument? generatedDocument = null;
+    if (input.GeneratedDocumentId.HasValue)
+    {
+        generatedDocument = await db.GeneratedDocuments.FindAsync(input.GeneratedDocumentId.Value);
+        if (generatedDocument is null)
+        {
+            return Results.NotFound(new { error = "Generated document not found" });
+        }
+    }
+
+    var message = new MimeMessage();
+
+    var fromDisplayName = input.FromDisplayName.Trim();
+    var fromMailbox = string.IsNullOrWhiteSpace(fromDisplayName)
+        ? new MailboxAddress(input.FromEmail.Trim(), input.FromEmail.Trim())
+        : new MailboxAddress(fromDisplayName, input.FromEmail.Trim());
+
+    message.From.Add(fromMailbox);
+
+    AddMailboxAddresses(message.To, input.To);
+    AddMailboxAddresses(message.Cc, input.Cc);
+    AddMailboxAddresses(message.Bcc, input.Bcc);
+
+    message.Subject = input.Subject.Trim();
+
+    var bodyBuilder = new BodyBuilder();
+
+    if (input.IsHtml)
+    {
+        bodyBuilder.HtmlBody = input.Body;
+    }
+    else
+    {
+        bodyBuilder.TextBody = input.Body;
+    }
+
+    if (generatedDocument is not null)
+    {
+        bodyBuilder.Attachments.Add(
+            generatedDocument.FileName,
+            generatedDocument.FileBytes,
+            ContentType.Parse(string.IsNullOrWhiteSpace(generatedDocument.ContentType)
+                ? "application/octet-stream"
+                : generatedDocument.ContentType));
+    }
+
+    message.Body = bodyBuilder.ToMessageBody();
+
+    try
+    {
+        using var smtpClient = new SmtpClient
+        {
+            Timeout = 30000
+        };
+
+        var secureSocketOptions = input.UseTls
+            ? SecureSocketOptions.StartTls
+            : SecureSocketOptions.Auto;
+
+        await smtpClient.ConnectAsync(input.SmtpHost.Trim(), input.SmtpPort, secureSocketOptions);
+
+        if (!string.IsNullOrWhiteSpace(input.Username))
+        {
+            await smtpClient.AuthenticateAsync(input.Username.Trim(), input.Password);
+        }
+
+        await smtpClient.SendAsync(message);
+        await smtpClient.DisconnectAsync(true);
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Email",
+            EntityId = input.GeneratedDocumentId?.ToString() ?? "",
+            Action = "EmailSent",
+            Details = generatedDocument is null
+                ? $"Email sent to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. No attachment."
+                : $"Email sent to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. Attached generated document '{generatedDocument.FileName}'.",
+            PerformedBy = performedBy,
+            CreatedAtUtc = nowUtc
+        });
+
+        await db.SaveChangesAsync();
+
+        logger.LogInformation(
+            "Email sent by {PerformedBy} to {RecipientCount} recipient(s). Attachment: {AttachmentName}",
+            performedBy,
+            CountEmailRecipients(input),
+            generatedDocument?.FileName ?? "None");
+
+        return Results.Ok(new SendEmailResponse(
+            true,
+            "Email sent successfully.",
+            generatedDocument?.Id,
+            generatedDocument?.FileName ?? ""
+        ));
+    }
+    catch (Exception error)
+    {
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Email",
+            EntityId = input.GeneratedDocumentId?.ToString() ?? "",
+            Action = "EmailSendFailed",
+            Details = generatedDocument is null
+                ? $"Email send failed for {CountEmailRecipients(input)} recipient(s). Error: {SafeAuditSnippet(error.Message)}"
+                : $"Email send failed for {CountEmailRecipients(input)} recipient(s) with generated document '{generatedDocument.FileName}'. Error: {SafeAuditSnippet(error.Message)}",
+            PerformedBy = performedBy,
+            CreatedAtUtc = nowUtc
+        });
+
+        await db.SaveChangesAsync();
+
+        logger.LogWarning(
+            error,
+            "Email send failed for {PerformedBy} with attachment {AttachmentName}",
+            performedBy,
+            generatedDocument?.FileName ?? "None");
+
+        return Results.BadRequest(new
+        {
+            error = "Email send failed. Check SMTP settings, credentials, recipient address, and provider requirements."
+        });
+    }
+}).RequireAuthorization("AuthenticatedUser");
+
 app.MapGet("/generated-documents", async (
     string? sourceEntityType,
     Guid? sourceEntityId,
@@ -2982,6 +3141,137 @@ app.Run();
 
 
 
+
+
+static async Task<string> ValidateSendEmailRequestAsync(SendEmailRequest input, LocalCrmDbContext db)
+{
+    if (string.IsNullOrWhiteSpace(input.SmtpHost))
+    {
+        return "SMTP host is required";
+    }
+
+    if (input.SmtpPort < 1 || input.SmtpPort > 65535)
+    {
+        return "SMTP port must be between 1 and 65535";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.FromEmail))
+    {
+        return "From email is required";
+    }
+
+    if (!IsValidEmail(input.FromEmail.Trim()))
+    {
+        return "A valid From email address is required";
+    }
+
+    var toRecipients = ParseEmailAddressList(input.To);
+    var ccRecipients = ParseEmailAddressList(input.Cc);
+    var bccRecipients = ParseEmailAddressList(input.Bcc);
+    var allRecipients = toRecipients.Concat(ccRecipients).Concat(bccRecipients).ToList();
+
+    if (toRecipients.Count == 0)
+    {
+        return "At least one To recipient is required";
+    }
+
+    if (allRecipients.Count == 0)
+    {
+        return "At least one recipient is required";
+    }
+
+    if (allRecipients.Count > 50)
+    {
+        return "Email cannot have more than 50 total recipients";
+    }
+
+    var invalidRecipient = allRecipients.FirstOrDefault(recipient => !IsValidEmail(recipient));
+    if (!string.IsNullOrWhiteSpace(invalidRecipient))
+    {
+        return $"Invalid email recipient: {invalidRecipient}";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Subject))
+    {
+        return "Email subject is required";
+    }
+
+    if (input.Subject.Trim().Length > 300)
+    {
+        return "Email subject cannot exceed 300 characters";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.Body))
+    {
+        return "Email body is required";
+    }
+
+    if (input.Body.Length > 50000)
+    {
+        return "Email body cannot exceed 50000 characters";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Username) && string.IsNullOrWhiteSpace(input.Password))
+    {
+        return "SMTP password is required when SMTP username is provided";
+    }
+
+    if (input.GeneratedDocumentId.HasValue)
+    {
+        var documentExists = await db.GeneratedDocuments.AnyAsync(document => document.Id == input.GeneratedDocumentId.Value);
+        if (!documentExists)
+        {
+            return "Generated document attachment was not found";
+        }
+    }
+
+    return "";
+}
+
+static List<string> ParseEmailAddressList(string value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return new List<string>();
+    }
+
+    return value
+        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .Where(email => !string.IsNullOrWhiteSpace(email))
+        .ToList();
+}
+
+static void AddMailboxAddresses(InternetAddressList target, string value)
+{
+    foreach (var email in ParseEmailAddressList(value))
+    {
+        target.Add(MailboxAddress.Parse(email));
+    }
+}
+
+static int CountEmailRecipients(SendEmailRequest input)
+{
+    return ParseEmailAddressList(input.To).Count +
+        ParseEmailAddressList(input.Cc).Count +
+        ParseEmailAddressList(input.Bcc).Count;
+}
+
+static string SafeAuditSnippet(string value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return "";
+    }
+
+    var sanitized = value
+        .Replace("\r", " ")
+        .Replace("\n", " ")
+        .Trim();
+
+    return sanitized.Length <= 120
+        ? sanitized
+        : sanitized[..120] + "...";
+}
 
 static GeneratedDocument CreateGeneratedDocument(
     string documentType,
@@ -4843,6 +5133,31 @@ static bool IsValidEmail(string email)
 
 
 
+
+
+public record SendEmailRequest(
+    string SmtpHost,
+    int SmtpPort,
+    bool UseTls,
+    string FromEmail,
+    string FromDisplayName,
+    string Username,
+    string Password,
+    string To,
+    string Cc,
+    string Bcc,
+    string Subject,
+    string Body,
+    bool IsHtml,
+    Guid? GeneratedDocumentId
+);
+
+public record SendEmailResponse(
+    bool Sent,
+    string Message,
+    Guid? GeneratedDocumentId,
+    string AttachedFileName
+);
 
 public record GeneratedDocumentResponse(
     Guid Id,
