@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -32,6 +32,8 @@ Template-backed printable document rendering
 Placeholder token replacement for generated documents
 Browser-printable HTML document generation
 Server-side generated HTML document file creation
+Session-only email workflow configuration
+Local-only email draft preparation
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -71,6 +73,8 @@ Scope-of-work View / Print workflow
 Admin/Owner document-template management panel
 Template seeding, editing, activation/deactivation, default selection, DOCX import, and template export
 Generated document file creation/download workflow
+Session-only email settings workflow
+Local-only email draft preparation workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -81,6 +85,8 @@ Account security panel
 Admin/Owner Staff password reset panel
 Owner-only Admin creation panel
 Admin/Owner global audit review panel
+Session-only email workflow settings panel
+Local-only email draft preparation panel
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -135,6 +141,7 @@ Owner users can view and print scope-of-work documents
 Owner users can manage document templates
 Owner users can import and export document templates
 Owner users can generate and download stored document files
+Owner users can configure session-only email workflow settings
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -149,6 +156,7 @@ Admin users can view and print scope-of-work documents
 Admin users can manage document templates
 Admin users can import and export document templates
 Admin users can generate and download stored document files
+Admin users can configure session-only email workflow settings
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -162,6 +170,7 @@ Staff users can view and print contract documents
 Staff users can create scopes of work
 Staff users can view scope-of-work records
 Staff users can view and print scope-of-work documents
+Staff users can configure session-only email workflow settings
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
 Staff users cannot manage quote, contract, or scope-of-work status transitions
@@ -465,6 +474,20 @@ Generated documents can be downloaded as files
 Generated document creation is audit logged
 Generated document download is audit logged
 Existing browser View / Print workflow remains intact
+Session-only Email Workflow Configuration
+Configure SMTP host, port, TLS setting, From email, display name, username, and password in the CRM UI
+Email settings are stored only in React memory state
+Email settings are not saved to PostgreSQL
+Email settings are not saved to browser localStorage
+Email settings clear on logout
+Email settings clear on session expiration
+Email settings clear on page refresh
+SMTP password is held only in frontend session state for Phase 14a
+Email draft preparation supports To, CC, BCC, subject, and body fields
+Email draft validation checks recipient email format, subject, and body
+Email draft data is local-only in Phase 14a
+No backend email sending occurs in Phase 14a
+Production persistent per-user email configuration remains planned for a later shippable-product layer
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -563,11 +586,15 @@ Document template export action state
 Generated document list state
 Generated document selected-source state
 Generated document create/download action state
+Session-only email configuration state
+Local-only email draft state
+Email configuration validation state
+Email draft validation state
 Account security form state
 Staff password reset form state
 Owner-only Admin creation form state
 Global audit review filter state
-Clear validation messages for customer, quote, contract, scope-of-work, document-template, note, login, Staff user, Admin user, password, audit, and edit request forms
+Clear validation messages for customer, quote, contract, scope-of-work, document-template, email configuration, email draft, note, login, Staff user, Admin user, password, audit, and edit request forms
 Backend Reliability Features
 Backend health check
 Database connectivity status
@@ -722,6 +749,8 @@ Generated file byte storage and generated document download workflow
 Placeholder-token document generation
 Default template selection and fallback document rendering
 Stored generated document artifact workflow
+Session-only sensitive configuration workflow
+Local-only email draft preparation workflow
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1582,6 +1611,87 @@ Confirm template-backed rendering still works when active/default templates exis
 Confirm fallback layouts still work when no active/default template exists.
 Important Phase 13d Boundary
 Phase 13d stores generated HTML output files. It establishes the generated-document artifact pipeline. Full DOCX/PDF generation from CRM records and imported DOCX templates remains planned for the next document generation layer.
+✅ Phase 14a — Completed
+Phase 14a added a session-only email workflow configuration UI and local-only email draft preparation while intentionally avoiding credential persistence.
+Implemented
+`EmailConfigForm` frontend type
+`EmailDraftForm` frontend type
+Session-only email configuration state
+Local-only email draft state
+Session-ready email configuration flag
+Email Workflow Settings panel
+Email Draft Prep panel
+SMTP host field
+SMTP port field
+Use TLS selector
+From email field
+From display name field
+SMTP username field
+SMTP password/app password field
+Password status display
+Email To field
+Email CC field
+Email BCC field
+Email subject field
+Email body field
+Email configuration validation
+Email draft validation
+Save Email Settings for Session action
+Clear Session Email Settings action
+Prepare Draft action
+Clear Draft action
+Email settings clear on logout
+Email settings clear on session expiration
+Email settings clear on page refresh
+Email drafts clear on logout/session reset
+No backend email send endpoint added yet
+No PostgreSQL persistence for email credentials
+No localStorage persistence for SMTP credentials
+No migration required
+No Vite proxy update required
+Security Boundary
+Phase 14a intentionally keeps SMTP settings and passwords in frontend memory only.
+Email settings are not persisted to PostgreSQL.
+Email settings are not persisted to browser localStorage.
+Email settings are not sent to the backend unless a later explicit send action is added.
+The current design supports safe development testing without storing email credentials.
+Production persistent email linking is planned for a later shippable-product layer where Owner/Admin users can configure per-user email workflow settings with proper secure storage.
+Verified Flow
+Sign in as Owner, Admin, or Staff.
+Open the Email Workflow Settings panel.
+Enter SMTP host, SMTP port, TLS option, From email, display name, username, and password.
+Click `Save Email Settings for Session`.
+Confirm the status changes to `Session Ready`.
+Open the Email Draft Prep panel.
+Enter To, optional CC/BCC, subject, and body.
+Click `Prepare Draft`.
+Confirm the draft validates successfully.
+Sign out.
+Sign back in.
+Confirm email settings are cleared.
+Confirm email draft data is cleared.
+Refresh the browser.
+Confirm session-only email settings do not persist.
+Important Phase 14a Boundary
+Phase 14a does not send email yet. Next planned work is Phase 14b backend session-only email sending, followed by Phase 14c frontend generated-document email sending.
+Phase 14 Roadmap
+Phase 14a:
+Session-only email workflow configuration UI
+Local-only email draft preparation
+No backend sending
+No credential persistence
+Phase 14b:
+Backend email send endpoint
+Session-supplied SMTP settings only
+Generated-document attachment support
+Email send audit events without secret exposure
+No SMTP credential persistence
+Phase 14c:
+Frontend email send workflow
+Generated-document selection
+Recipient/subject/body workflow
+Send generated quote/contract/scope-of-work files by email through session-only settings
+Clear settings and draft state on logout/session expiration/page refresh
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1651,6 +1761,18 @@ STAFF_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"staff@localcrm.dev","password":"Staff123!"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+```
+Manual Phase 14a Email Workflow Check
+```text
+1. Sign in through the frontend.
+2. Fill out Email Workflow Settings.
+3. Click Save Email Settings for Session.
+4. Confirm the panel shows Session Ready.
+5. Fill out Email Draft Prep.
+6. Click Prepare Draft.
+7. Sign out.
+8. Sign back in and confirm email settings and draft fields are cleared.
+9. Refresh the browser and confirm SMTP settings do not persist.
 ```
 Confirm Customers Require Auth
 ```bash
@@ -2172,12 +2294,29 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 13e:
-Generate DOCX/PDF files from live CRM records
-Render stored DOCX templates against quote/contract/scope-of-work records
-Attach generated DOCX/PDF documents to quotes/contracts/scope-of-work records
+Phase 14b:
+Backend session-only email send endpoint
+Accept SMTP/email configuration only inside an explicit send request
+Do not persist SMTP host, username, password, sender configuration, recipient fields, or message body
+Send plain-text/HTML email from session-supplied SMTP settings
+Support optional generated-document attachment by `GeneratedDocumentId`
+Load generated-document file bytes from the existing GeneratedDocuments table when attaching files
+Validate recipient, subject, body, SMTP host, SMTP port, sender, and attachment ID
+Audit email send success/failure without exposing SMTP passwords, usernames, recipient secrets, or message body contents
+Return safe success/failure responses to the frontend
+Phase 14c:
+Frontend generated-document email send workflow
+Use Phase 14a session-only email settings as the send configuration source
+Select a generated quote, contract, or scope-of-work document for emailing
+Pre-fill recipient from selected customer email when available
+Pre-fill subject/body from selected document context when available
+Attach selected generated document to email send request
+Send quote/contract/scope-of-work artifacts through session-only email settings
+Show send success/failure state in the UI
+Refresh Audit Review after send attempts for Admin/Owner users
+Keep SMTP credentials in frontend memory only
+Clear email settings and draft state on logout/session expiration/page refresh
 Later Phases
-Phase 14: Email workflow
 Phase 15: Calendar/ICS export
 Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
 Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts. Accounts Payable sorting and searching by vendor name, requisition creator, requisition number, purchase order number, date. Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phone number, invoice number, invoice status, contract number, date
@@ -2187,7 +2326,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 13d complete — GeneratedDocument storage, server-side generated HTML files, generated document listing/download, quote/contract/scope-of-work Generate File actions, and generated-document audit events are working.
+Phase 14a complete — Session-only email workflow settings, local-only email draft preparation, email validation, and no-persistence credential handling are working. Next planned work is Phase 14b backend email sending with session-supplied SMTP settings.
 ```
 ---
 👤 Author

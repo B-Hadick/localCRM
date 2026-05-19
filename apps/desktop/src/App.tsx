@@ -312,6 +312,37 @@ type DocumentTemplateImportForm = {
   file: File | null;
 };
 
+type GeneratedDocument = {
+  id: string;
+  documentType: string;
+  sourceEntityType: string;
+  sourceEntityId: string;
+  templateId: string | null;
+  fileName: string;
+  contentType: string;
+  generatedBy: string;
+  generatedAtUtc: string;
+  createdAtUtc: string;
+};
+
+type EmailConfigForm = {
+  smtpHost: string;
+  smtpPort: string;
+  useTls: boolean;
+  fromEmail: string;
+  fromDisplayName: string;
+  username: string;
+  password: string;
+};
+
+type EmailDraftForm = {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -433,6 +464,24 @@ const emptyDocumentTemplateImportForm: DocumentTemplateImportForm = {
   file: null
 };
 
+const emptyEmailConfigForm: EmailConfigForm = {
+  smtpHost: "",
+  smtpPort: "587",
+  useTls: true,
+  fromEmail: "",
+  fromDisplayName: "",
+  username: "",
+  password: ""
+};
+
+const emptyEmailDraftForm: EmailDraftForm = {
+  to: "",
+  cc: "",
+  bcc: "",
+  subject: "",
+  body: ""
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -473,6 +522,8 @@ function App() {
   const [scopesOfWork, setScopesOfWork] = useState<ScopeOfWork[]>([]);
   const [customerScopesOfWork, setCustomerScopesOfWork] = useState<ScopeOfWork[]>([]);
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
+  const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
+  const [selectedSourceGeneratedDocuments, setSelectedSourceGeneratedDocuments] = useState<GeneratedDocument[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [customerLoadError, setCustomerLoadError] = useState("");
@@ -507,6 +558,9 @@ function App() {
   const [documentTemplateForm, setDocumentTemplateForm] = useState<DocumentTemplateForm>(emptyDocumentTemplateForm);
   const [documentTemplateImportForm, setDocumentTemplateImportForm] =
     useState<DocumentTemplateImportForm>(emptyDocumentTemplateImportForm);
+  const [emailConfigForm, setEmailConfigForm] = useState<EmailConfigForm>(emptyEmailConfigForm);
+  const [emailDraftForm, setEmailDraftForm] = useState<EmailDraftForm>(emptyEmailDraftForm);
+  const [emailConfigSavedForSession, setEmailConfigSavedForSession] = useState(false);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -521,6 +575,10 @@ function App() {
     () => new Set(pendingRequestCustomerIds),
     [pendingRequestCustomerIds]
   );
+
+  const maskedEmailPassword = emailConfigForm.password
+    ? "Password set for this session"
+    : "No password set";
 
   function setStatus(message: string, type: "info" | "success" | "error" = "info") {
     setStatusMessage(message);
@@ -706,6 +764,71 @@ function App() {
 
     if (input.newPassword !== input.confirmPassword) {
       return "Temporary password and confirmation do not match.";
+    }
+
+    return "";
+  }
+
+  function validateEmailConfigForm(input: EmailConfigForm) {
+    const smtpHost = input.smtpHost.trim();
+    const smtpPort = Number(input.smtpPort);
+    const fromEmail = input.fromEmail.trim();
+
+    if (!smtpHost) {
+      return "SMTP host is required.";
+    }
+
+    if (!input.smtpPort.trim()) {
+      return "SMTP port is required.";
+    }
+
+    if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+      return "SMTP port must be a whole number between 1 and 65535.";
+    }
+
+    if (!fromEmail) {
+      return "From email is required.";
+    }
+
+    if (!isValidEmail(fromEmail)) {
+      return "Enter a valid From email address.";
+    }
+
+    if (input.username.trim() && !input.password) {
+      return "SMTP password is required when a username is provided.";
+    }
+
+    return "";
+  }
+
+  function validateEmailDraftForm(input: EmailDraftForm) {
+    if (!input.to.trim()) {
+      return "Email recipient is required.";
+    }
+
+    const recipients = [
+      ...input.to.split(","),
+      ...input.cc.split(","),
+      ...input.bcc.split(",")
+    ]
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (recipients.length === 0) {
+      return "At least one recipient is required.";
+    }
+
+    const invalidRecipient = recipients.find((recipient) => !isValidEmail(recipient));
+    if (invalidRecipient) {
+      return `Invalid email recipient: ${invalidRecipient}`;
+    }
+
+    if (!input.subject.trim()) {
+      return "Email subject is required.";
+    }
+
+    if (!input.body.trim()) {
+      return "Email body is required.";
     }
 
     return "";
@@ -952,6 +1075,8 @@ function App() {
     setScopesOfWork([]);
     setCustomerScopesOfWork([]);
     setDocumentTemplates([]);
+    setGeneratedDocuments([]);
+    setSelectedSourceGeneratedDocuments([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -967,6 +1092,9 @@ function App() {
     setDocumentTemplateForm(emptyDocumentTemplateForm);
     setDocumentTemplateImportForm(emptyDocumentTemplateImportForm);
     setDocumentTemplateTypeFilter("All");
+    setEmailConfigForm(emptyEmailConfigForm);
+    setEmailDraftForm(emptyEmailDraftForm);
+    setEmailConfigSavedForSession(false);
     setStatus(message, "error");
   }
 
@@ -1066,6 +1194,8 @@ function App() {
     setScopesOfWork([]);
     setCustomerScopesOfWork([]);
     setDocumentTemplates([]);
+    setGeneratedDocuments([]);
+    setSelectedSourceGeneratedDocuments([]);
     setCustomerEditRequests([]);
     setRequestQueue([]);
     setPendingRequestCustomerIds([]);
@@ -1080,6 +1210,9 @@ function App() {
     setDocumentTemplateForm(emptyDocumentTemplateForm);
     setDocumentTemplateImportForm(emptyDocumentTemplateImportForm);
     setDocumentTemplateTypeFilter("All");
+    setEmailConfigForm(emptyEmailConfigForm);
+    setEmailDraftForm(emptyEmailDraftForm);
+    setEmailConfigSavedForSession(false);
     setStatus("Signed out.", "info");
   }
 
@@ -1284,6 +1417,59 @@ function App() {
       console.error(error);
       setGlobalAuditLogs([]);
       setStatus("Failed to load global audit log", "error");
+    }
+  }
+
+  async function loadGeneratedDocuments(sourceEntityType?: string, sourceEntityId?: string) {
+    if (!currentUser) {
+      setGeneratedDocuments([]);
+      setSelectedSourceGeneratedDocuments([]);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+
+      if (sourceEntityType) {
+        params.set("sourceEntityType", sourceEntityType);
+      }
+
+      if (sourceEntityId) {
+        params.set("sourceEntityId", sourceEntityId);
+      }
+
+      const queryString = params.toString();
+      const url = queryString ? `/generated-documents?${queryString}` : "/generated-documents";
+
+      const response = await fetch(url, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as GeneratedDocument[];
+
+      if (sourceEntityType && sourceEntityId) {
+        setSelectedSourceGeneratedDocuments(data);
+      } else {
+        setGeneratedDocuments(data);
+      }
+    } catch (error) {
+      console.error(error);
+
+      if (sourceEntityType && sourceEntityId) {
+        setSelectedSourceGeneratedDocuments([]);
+      } else {
+        setGeneratedDocuments([]);
+      }
+
+      setStatus("Failed to load generated documents", "error");
     }
   }
 
@@ -1764,6 +1950,7 @@ function App() {
       loadQuotes();
       loadContracts();
       loadScopesOfWork();
+      loadGeneratedDocuments();
     }
   }, [
     currentUser,
@@ -1824,6 +2011,7 @@ function App() {
       loadCustomerQuotes(selectedCustomer.id);
       loadCustomerContracts(selectedCustomer.id);
       loadCustomerScopesOfWork(selectedCustomer.id);
+      setSelectedSourceGeneratedDocuments([]);
       setQuoteForm((current) => ({
         ...current,
         customerId: selectedCustomer.id
@@ -2201,6 +2389,42 @@ function App() {
     }
   }
 
+  async function generateQuoteDocumentFile(quoteId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before generating quote files.", "error");
+      return;
+    }
+
+    setStatus("Generating stored quote document...", "info");
+
+    try {
+      const response = await fetch(`/quotes/${quoteId}/generated-documents`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const generatedDocument = (await response.json()) as GeneratedDocument;
+      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      await loadGeneratedDocuments();
+      await loadGeneratedDocuments("Quote", quoteId);
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to generate quote document file.", "error");
+    }
+  }
+
   async function handleQuoteStatusUpdate(quoteId: string, status: string) {
     if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin or Owner users can update quote status.", "error");
@@ -2354,6 +2578,42 @@ function App() {
     } catch (error) {
       console.error(error);
       setStatus(error instanceof Error ? error.message : "Failed to open contract document.", "error");
+    }
+  }
+
+  async function generateContractDocumentFile(contractId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before generating contract files.", "error");
+      return;
+    }
+
+    setStatus("Generating stored contract document...", "info");
+
+    try {
+      const response = await fetch(`/contracts/${contractId}/generated-documents`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const generatedDocument = (await response.json()) as GeneratedDocument;
+      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      await loadGeneratedDocuments();
+      await loadGeneratedDocuments("Contract", contractId);
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to generate contract document file.", "error");
     }
   }
 
@@ -2518,6 +2778,42 @@ function App() {
     }
   }
 
+  async function generateScopeOfWorkDocumentFile(scopeId: string) {
+    if (!currentUser) {
+      setStatus("Sign in before generating scope-of-work files.", "error");
+      return;
+    }
+
+    setStatus("Generating stored scope-of-work document...", "info");
+
+    try {
+      const response = await fetch(`/scopes-of-work/${scopeId}/generated-documents`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const generatedDocument = (await response.json()) as GeneratedDocument;
+      setStatus(`Generated document "${generatedDocument.fileName}" created.`, "success");
+      await loadGeneratedDocuments();
+      await loadGeneratedDocuments("ScopeOfWork", scopeId);
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to generate scope-of-work document file.", "error");
+    }
+  }
+
   async function handleScopeOfWorkStatusUpdate(scopeId: string, status: string) {
     if (!currentUser || !isAdminOrOwner) {
       setStatus("Only Admin or Owner users can update scope-of-work status.", "error");
@@ -2564,6 +2860,139 @@ function App() {
       console.error(error);
       setStatus(error instanceof Error ? error.message : "Failed to update scope-of-work status.", "error");
     }
+  }
+
+  async function downloadGeneratedDocument(generatedDocument: GeneratedDocument) {
+    if (!currentUser) {
+      setStatus("Sign in before downloading generated documents.", "error");
+      return;
+    }
+
+    setStatus(`Downloading "${generatedDocument.fileName}"...`, "info");
+
+    try {
+      const response = await fetch(`/generated-documents/${generatedDocument.id}/download`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = objectUrl;
+      link.download = generatedDocument.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+
+      setStatus(`Downloaded "${generatedDocument.fileName}".`, "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to download generated document.", "error");
+    }
+  }
+
+  function renderGeneratedDocumentList(documents: GeneratedDocument[], emptyMessage: string) {
+    return (
+      <div className="stack-list compact-list">
+        {documents.length === 0 ? (
+          <p className="muted-text">{emptyMessage}</p>
+        ) : (
+          documents.map((document) => (
+            <div key={document.id} className="stack-item">
+              <div className="stack-item-header">
+                <strong>{document.fileName}</strong>
+                <span className="status-chip status-chip-active">{document.documentType}</span>
+              </div>
+
+              <div className="compact-content">
+                {document.sourceEntityType} · Generated by {document.generatedBy}
+              </div>
+
+              <div className="muted-text compact-meta">
+                Generated {formatDate(document.generatedAtUtc)}
+                {document.templateId ? " · Template-backed" : " · Fallback layout"}
+              </div>
+
+              <div className="quote-status-row">
+                <button type="button" onClick={() => downloadGeneratedDocument(document)}>
+                  Download
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  function handleEmailConfigSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before configuring email workflow.", "error");
+      return;
+    }
+
+    const validationError = validateEmailConfigForm(emailConfigForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setEmailConfigForm({
+      ...emailConfigForm,
+      smtpHost: emailConfigForm.smtpHost.trim(),
+      smtpPort: emailConfigForm.smtpPort.trim(),
+      fromEmail: emailConfigForm.fromEmail.trim(),
+      fromDisplayName: emailConfigForm.fromDisplayName.trim(),
+      username: emailConfigForm.username.trim()
+    });
+
+    setEmailConfigSavedForSession(true);
+    setStatus("Email settings saved for this session only.", "success");
+  }
+
+  function clearSessionEmailConfig() {
+    setEmailConfigForm(emptyEmailConfigForm);
+    setEmailDraftForm(emptyEmailDraftForm);
+    setEmailConfigSavedForSession(false);
+    setStatus("Session email settings cleared.", "info");
+  }
+
+  function handleEmailDraftSave(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser) {
+      setStatus("Sign in before preparing email drafts.", "error");
+      return;
+    }
+
+    if (!emailConfigSavedForSession) {
+      setStatus("Save session email settings before preparing an email draft.", "error");
+      return;
+    }
+
+    const validationError = validateEmailDraftForm(emailDraftForm);
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Email draft prepared locally for this session. Backend sending will be wired in Phase 14b.", "success");
   }
 
   async function handleDocumentTemplateSubmit(event: FormEvent) {
@@ -3224,6 +3653,190 @@ function App() {
       <div className={`status-banner status-${statusType}`}>
         {statusMessage}
       </div>
+
+      <section className="layout-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Email Workflow Settings</h2>
+            <span className={`status-chip ${emailConfigSavedForSession ? "status-chip-active" : "status-chip-inactive"}`}>
+              {emailConfigSavedForSession ? "Session Ready" : "Not Configured"}
+            </span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleEmailConfigSubmit}>
+            <div className="form-grid">
+              <label>
+                SMTP Host
+                <input
+                  value={emailConfigForm.smtpHost}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, smtpHost: e.target.value })}
+                  placeholder="smtp.example.com"
+                />
+              </label>
+
+              <label>
+                SMTP Port
+                <input
+                  value={emailConfigForm.smtpPort}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, smtpPort: e.target.value })}
+                  placeholder="587"
+                />
+              </label>
+
+              <label>
+                Use TLS
+                <select
+                  value={emailConfigForm.useTls ? "true" : "false"}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, useTls: e.target.value === "true" })}
+                >
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+
+              <label>
+                From Email
+                <input
+                  value={emailConfigForm.fromEmail}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, fromEmail: e.target.value })}
+                  placeholder="sender@example.com"
+                />
+              </label>
+
+              <label>
+                From Display Name
+                <input
+                  value={emailConfigForm.fromDisplayName}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, fromDisplayName: e.target.value })}
+                  placeholder="LocalCRM"
+                />
+              </label>
+
+              <label>
+                SMTP Username
+                <input
+                  value={emailConfigForm.username}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, username: e.target.value })}
+                  placeholder="sender@example.com"
+                />
+              </label>
+
+              <label>
+                SMTP Password / App Password
+                <input
+                  type="password"
+                  value={emailConfigForm.password}
+                  onChange={(e) => setEmailConfigForm({ ...emailConfigForm, password: e.target.value })}
+                  placeholder="Session-only password"
+                />
+              </label>
+
+              <label>
+                Password Status
+                <input value={maskedEmailPassword} readOnly />
+              </label>
+            </div>
+
+            <div className="auth-hint">
+              Phase 14a keeps email settings in memory only. They are not saved to localStorage, not saved to PostgreSQL, and clear on logout/session expiration/page refresh.
+            </div>
+
+            <div className="note-actions-row">
+              <button type="submit">Save Email Settings for Session</button>
+
+              <button type="button" onClick={clearSessionEmailConfig}>
+                Clear Session Email Settings
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Email Draft Prep</h2>
+            <span className="status-chip status-chip-active">Phase 14a</span>
+          </div>
+
+          <form className="customer-form" onSubmit={handleEmailDraftSave}>
+            <div className="form-grid">
+              <label>
+                To
+                <input
+                  value={emailDraftForm.to}
+                  onChange={(e) => setEmailDraftForm({ ...emailDraftForm, to: e.target.value })}
+                  placeholder="recipient@example.com"
+                />
+              </label>
+
+              <label>
+                CC
+                <input
+                  value={emailDraftForm.cc}
+                  onChange={(e) => setEmailDraftForm({ ...emailDraftForm, cc: e.target.value })}
+                  placeholder="optional@example.com"
+                />
+              </label>
+
+              <label>
+                BCC
+                <input
+                  value={emailDraftForm.bcc}
+                  onChange={(e) => setEmailDraftForm({ ...emailDraftForm, bcc: e.target.value })}
+                  placeholder="optional@example.com"
+                />
+              </label>
+
+              <label>
+                Subject
+                <input
+                  value={emailDraftForm.subject}
+                  onChange={(e) => setEmailDraftForm({ ...emailDraftForm, subject: e.target.value })}
+                  placeholder="Quote / Contract / Scope of Work"
+                />
+              </label>
+            </div>
+
+            <label>
+              Body
+              <textarea
+                value={emailDraftForm.body}
+                onChange={(e) => setEmailDraftForm({ ...emailDraftForm, body: e.target.value })}
+                placeholder="Email message body"
+                rows={6}
+              />
+            </label>
+
+            <div className="auth-hint">
+              This draft is local-only in Phase 14a. Actual backend sending and generated-document attachment selection will be wired in Phase 14b/14c.
+            </div>
+
+            <div className="note-actions-row">
+              <button type="submit" disabled={!emailConfigSavedForSession}>
+                Prepare Draft
+              </button>
+
+              <button type="button" onClick={() => setEmailDraftForm(emptyEmailDraftForm)}>
+                Clear Draft
+              </button>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <section className="card">
+        <div className="section-header compact-header">
+          <h2>Generated Documents</h2>
+          <span className="count-chip">{generatedDocuments.length}</span>
+        </div>
+
+        <div className="note-actions-row">
+          <button type="button" onClick={() => loadGeneratedDocuments()}>
+            Refresh Generated Documents
+          </button>
+        </div>
+
+        {renderGeneratedDocumentList(generatedDocuments, "No generated documents have been stored yet.")}
+      </section>
 
       {isAdminOrOwner && (
         <section className="layout-grid">
@@ -4963,6 +5576,10 @@ function App() {
                       <button type="button" onClick={() => openContractDocument(contract.id)}>
                         View / Print
                       </button>
+
+                      <button type="button" onClick={() => generateContractDocumentFile(contract.id)}>
+                        Generate File
+                      </button>
                     </div>
                   </div>
                 ))
@@ -5002,9 +5619,51 @@ function App() {
                       <button type="button" onClick={() => openScopeOfWorkDocument(scope.id)}>
                         View / Print
                       </button>
+
+                      <button type="button" onClick={() => generateScopeOfWorkDocumentFile(scope.id)}>
+                        Generate File
+                      </button>
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+
+            <div className="stack-list compact-list">
+              <div className="section-header compact-header">
+                <h3>Selected Document Files</h3>
+                <span className="count-chip">{selectedSourceGeneratedDocuments.length}</span>
+              </div>
+
+              <div className="note-actions-row">
+                <button
+                  type="button"
+                  onClick={() => selectedCustomer && loadGeneratedDocuments("Quote", customerQuotes[0]?.id ?? "")}
+                  disabled={customerQuotes.length === 0}
+                >
+                  Load First Quote Files
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectedCustomer && loadGeneratedDocuments("Contract", customerContracts[0]?.id ?? "")}
+                  disabled={customerContracts.length === 0}
+                >
+                  Load First Contract Files
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectedCustomer && loadGeneratedDocuments("ScopeOfWork", customerScopesOfWork[0]?.id ?? "")}
+                  disabled={customerScopesOfWork.length === 0}
+                >
+                  Load First SOW Files
+                </button>
+              </div>
+
+              {renderGeneratedDocumentList(
+                selectedSourceGeneratedDocuments,
+                "Select a document source using the buttons above to view stored files."
               )}
             </div>
 
