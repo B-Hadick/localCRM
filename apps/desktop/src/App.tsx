@@ -1087,6 +1087,73 @@ function App() {
     }));
   }
 
+  function findCustomerById(customerId: string | null | undefined) {
+    if (!customerId) {
+      return null;
+    }
+
+    if (selectedCustomer?.id === customerId) {
+      return selectedCustomer;
+    }
+
+    return customers.find((customer) => customer.id === customerId) ?? null;
+  }
+
+  function findSourceSummaryForGeneratedDocument(generatedDocument: GeneratedDocument) {
+    if (generatedDocument.sourceEntityType === "Quote") {
+      const quote = [...quotes, ...customerQuotes].find((item) => item.id === generatedDocument.sourceEntityId);
+      const customer = findCustomerById(quote?.customerId);
+
+      return {
+        label: quote ? `Quote ${quote.quoteNumber}` : "Quote document",
+        customerEmail: customer?.email ?? "",
+        subject: quote ? `Quote ${quote.quoteNumber} - ${quote.title}` : `Quote document - ${generatedDocument.fileName}`,
+        body: quote
+          ? `Hello${customer?.name ? ` ${customer.name}` : ""},\n\nPlease see the attached quote document for ${quote.title}.\n\nThank you,`
+          : `Hello,\n\nPlease see the attached quote document.\n\nThank you,`
+      };
+    }
+
+    if (generatedDocument.sourceEntityType === "Contract") {
+      const contract = [...contracts, ...customerContracts].find((item) => item.id === generatedDocument.sourceEntityId);
+      const customer = findCustomerById(contract?.customerId);
+
+      return {
+        label: contract ? `Contract ${contract.contractNumber}` : "Contract document",
+        customerEmail: customer?.email ?? "",
+        subject: contract
+          ? `Contract ${contract.contractNumber} - ${contract.title}`
+          : `Contract document - ${generatedDocument.fileName}`,
+        body: contract
+          ? `Hello${customer?.name ? ` ${customer.name}` : ""},\n\nPlease see the attached contract document for ${contract.title}.\n\nThank you,`
+          : `Hello,\n\nPlease see the attached contract document.\n\nThank you,`
+      };
+    }
+
+    if (generatedDocument.sourceEntityType === "ScopeOfWork") {
+      const scope = [...scopesOfWork, ...customerScopesOfWork].find((item) => item.id === generatedDocument.sourceEntityId);
+      const customer = findCustomerById(scope?.customerId);
+
+      return {
+        label: scope ? `Scope of Work ${scope.scopeNumber}` : "Scope of Work document",
+        customerEmail: customer?.email ?? "",
+        subject: scope
+          ? `Scope of Work ${scope.scopeNumber} - ${scope.title}`
+          : `Scope of Work document - ${generatedDocument.fileName}`,
+        body: scope
+          ? `Hello${customer?.name ? ` ${customer.name}` : ""},\n\nPlease see the attached scope-of-work document for ${scope.title}.\n\nThank you,`
+          : `Hello,\n\nPlease see the attached scope-of-work document.\n\nThank you,`
+      };
+    }
+
+    return {
+      label: generatedDocument.fileName,
+      customerEmail: selectedCustomer?.email ?? "",
+      subject: `Document - ${generatedDocument.fileName}`,
+      body: `Hello,\n\nPlease see the attached document.\n\nThank you,`
+    };
+  }
+
   function saveCurrentUser(user: AuthUser) {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
   }
@@ -2436,15 +2503,32 @@ function App() {
     });
   }
 
-  function attachNewGeneratedDocumentToDraft(generatedDocument: GeneratedDocument) {
+  function prepareEmailDraftForGeneratedDocument(generatedDocument: GeneratedDocument) {
+    const summary = findSourceSummaryForGeneratedDocument(generatedDocument);
+
     setEmailDraftForm((current) => ({
       ...current,
       generatedDocumentId: generatedDocument.id,
-      subject: current.subject || `${generatedDocument.documentType} document: ${generatedDocument.fileName}`,
-      body:
-        current.body ||
-        `Please see the attached ${generatedDocument.documentType.toLowerCase()} document.`
+      to: current.to || summary.customerEmail,
+      subject: current.subject || summary.subject,
+      body: current.body || summary.body
     }));
+
+    setStatus(
+      summary.customerEmail
+        ? `Email draft prepared for ${summary.label} and addressed to ${summary.customerEmail}.`
+        : `Email draft prepared for ${summary.label}. Add a recipient before sending.`,
+      "success"
+    );
+  }
+
+  function clearEmailAttachment() {
+    setEmailDraftForm((current) => ({
+      ...current,
+      generatedDocumentId: ""
+    }));
+
+    setStatus("Email attachment cleared.", "info");
   }
 
   async function generateQuoteDocumentFile(quoteId: string) {
@@ -2471,8 +2555,8 @@ function App() {
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
       addGeneratedDocumentToLocalState(generatedDocument);
-      attachNewGeneratedDocumentToDraft(generatedDocument);
-      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
+      prepareEmailDraftForGeneratedDocument(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and email draft prepared.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("Quote", quoteId);
 
@@ -2665,8 +2749,8 @@ function App() {
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
       addGeneratedDocumentToLocalState(generatedDocument);
-      attachNewGeneratedDocumentToDraft(generatedDocument);
-      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
+      prepareEmailDraftForGeneratedDocument(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and email draft prepared.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("Contract", contractId);
 
@@ -2864,8 +2948,8 @@ function App() {
 
       const generatedDocument = (await response.json()) as GeneratedDocument;
       addGeneratedDocumentToLocalState(generatedDocument);
-      attachNewGeneratedDocumentToDraft(generatedDocument);
-      setStatus(`Generated document "${generatedDocument.fileName}" created and attached to the email draft.`, "success");
+      prepareEmailDraftForGeneratedDocument(generatedDocument);
+      setStatus(`Generated document "${generatedDocument.fileName}" created and email draft prepared.`, "success");
       await loadGeneratedDocuments();
       await loadGeneratedDocuments("ScopeOfWork", scopeId);
 
@@ -3001,7 +3085,7 @@ function App() {
                   onClick={() => attachGeneratedDocumentToEmail(document)}
                   disabled={!emailConfigSavedForSession}
                 >
-                  Attach to Email
+                  Email File
                 </button>
               </div>
             </div>
@@ -3046,16 +3130,7 @@ function App() {
   }
 
   function attachGeneratedDocumentToEmail(generatedDocument: GeneratedDocument) {
-    setEmailDraftForm((current) => ({
-      ...current,
-      generatedDocumentId: generatedDocument.id,
-      subject: current.subject || `${generatedDocument.documentType} document: ${generatedDocument.fileName}`,
-      body:
-        current.body ||
-        `Please see the attached ${generatedDocument.documentType.toLowerCase()} document.`
-    }));
-
-    setStatus(`Attached "${generatedDocument.fileName}" to the local email draft.`, "success");
+    prepareEmailDraftForGeneratedDocument(generatedDocument);
   }
 
   function getSelectedEmailAttachmentName() {
@@ -3064,7 +3139,13 @@ function App() {
     }
 
     const selectedDocument = emailAttachableDocuments.find((document) => document.id === emailDraftForm.generatedDocumentId);
-    return selectedDocument?.fileName ?? "Selected generated document not found";
+
+    if (!selectedDocument) {
+      return "Selected generated document not found";
+    }
+
+    const summary = findSourceSummaryForGeneratedDocument(selectedDocument);
+    return `${selectedDocument.fileName} (${summary.label})`;
   }
 
   async function handleEmailDraftSave(event: FormEvent) {
@@ -3990,6 +4071,27 @@ function App() {
               </label>
             </div>
 
+            <div className="note-actions-row">
+              <button
+                type="button"
+                onClick={() =>
+                  selectedCustomer?.email
+                    ? setEmailDraftForm({ ...emailDraftForm, to: emailDraftForm.to || selectedCustomer.email })
+                    : setStatus("Selected customer does not have an email address.", "error")
+                }
+              >
+                Use Selected Customer Email
+              </button>
+
+              <button type="button" onClick={clearEmailAttachment} disabled={!emailDraftForm.generatedDocumentId}>
+                Clear Attachment
+              </button>
+
+              <button type="button" onClick={() => loadGeneratedDocuments()}>
+                Refresh Attachments
+              </button>
+            </div>
+
             <label>
               Body
               <textarea
@@ -4001,16 +4103,12 @@ function App() {
             </label>
 
             <div className="auth-hint">
-              Phase 14b sends through the backend using session-only SMTP settings. Settings are sent only with this explicit send request and are not persisted by the CRM.
+              Phase 14c uses the Phase 14b backend send endpoint with session-only SMTP settings. Settings are sent only with this explicit send request and are not persisted by the CRM.
             </div>
 
             <div className="note-actions-row">
               <button type="submit" disabled={!emailConfigSavedForSession}>
                 Send Email
-              </button>
-
-              <button type="button" onClick={() => loadGeneratedDocuments()}>
-                Refresh Attachments
               </button>
 
               <button type="button" onClick={() => setEmailDraftForm(emptyEmailDraftForm)}>

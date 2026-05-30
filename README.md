@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, backend SMTP email sending, generated-document email attachments, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, backend SMTP email sending, generated-document email attachments, CRM-aware email draft refinement, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -35,7 +35,8 @@ Server-side generated HTML document file creation
 Session-only email workflow configuration
 Backend SMTP email sending with session-supplied settings
 Generated-document email attachment workflow
-Local email draft preparation
+CRM-aware email draft preparation
+Customer/document-context email prefill
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -78,6 +79,7 @@ Generated document file creation/download workflow
 Session-only email settings workflow
 Backend email send workflow
 Generated-document email attachment workflow
+CRM-aware email recipient/subject/body prefill workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -91,6 +93,7 @@ Admin/Owner global audit review panel
 Session-only email workflow settings panel
 Email send panel
 Generated-document attachment selection
+CRM-aware email prefill controls
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -496,6 +499,12 @@ Generated documents can be attached to outbound email by `GeneratedDocumentId`
 Generated document file bytes are loaded from the existing GeneratedDocuments table for attachment
 Newly generated quote/contract/scope-of-work files auto-attach to the email draft
 Generated document attachment dropdown can be refreshed
+Generated document email actions use quote/contract/scope-of-work context where available
+Email recipient can be prefilled from the selected/customer-linked customer email when available
+Email subject can be prefilled from quote, contract, or scope-of-work context
+Email body can be prefilled from quote, contract, or scope-of-work context
+Selected email attachment display includes source-document context
+Email attachment can be cleared without clearing the full draft
 Email send success is audit logged
 Email send failure is audit logged
 Email validation failure is audit logged
@@ -605,6 +614,8 @@ Generated document create/download action state
 Session-only email configuration state
 Email draft/send state
 Generated-document email attachment state
+CRM-aware email prefill state
+Email selected-attachment state
 Email configuration validation state
 Email send validation state
 Account security form state
@@ -773,6 +784,7 @@ Generated artifact email delivery workflow
 Session-only sensitive configuration workflow
 Session-supplied SMTP email sending workflow
 Generated-document email attachment workflow
+CRM-aware generated-document email preparation workflow
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1711,10 +1723,14 @@ No SMTP credential persistence
 Completed
 Phase 14c:
 Frontend email workflow refinement
-Pre-fill recipient from selected customer email when available
+Completed
+Pre-fill recipient from selected customer/customer-linked email when available
 Pre-fill subject/body from selected quote, contract, scope-of-work, or generated document context
 Improve selected-document send flow
+Add clearer attachment display
+Add clear-attachment workflow
 Keep session-only SMTP security boundary intact
+Completed
 ✅ Phase 14b — Completed
 Phase 14b added backend session-only SMTP email sending and wired the frontend email workflow to send generated document artifacts without persisting credentials.
 Implemented
@@ -1761,7 +1777,7 @@ Frontend email send workflow wired to:
 Frontend plain-text/HTML body selector
 Frontend generated-document attachment selector
 Frontend selected attachment display
-Frontend `Attach to Email` action on generated documents
+Frontend `Email File` action on generated documents
 Frontend `Refresh Attachments` action
 Newly generated quote files auto-attach to the email draft
 Newly generated contract files auto-attach to the email draft
@@ -1803,6 +1819,70 @@ Confirm Audit Review shows `EmailSendValidationFailed` on validation failure.
 Confirm logout/session expiration/page refresh clears email settings and draft state.
 Important Phase 14b Boundary
 Phase 14b sends email but still uses session-only SMTP settings. It does not implement persistent per-user email account linking. Persistent Owner/Admin-managed email configuration remains a later production-hardening layer.
+✅ Phase 14c — Completed
+Phase 14c refined the frontend email workflow so generated document email actions behave more like native CRM document delivery actions.
+Implemented
+CRM-aware generated-document context lookup
+Customer lookup for generated quote documents
+Customer lookup for generated contract documents
+Customer lookup for generated scope-of-work documents
+Recipient prefill from selected customer email when available
+Recipient prefill from quote-linked customer email when available
+Recipient prefill from contract-linked customer email when available
+Recipient prefill from scope-of-work-linked customer email when available
+Subject prefill for generated quote files
+Subject prefill for generated contract files
+Subject prefill for generated scope-of-work files
+Body prefill for generated quote files
+Body prefill for generated contract files
+Body prefill for generated scope-of-work files
+Improved selected attachment display with source-document context
+Generated document action label changed from `Attach to Email` to `Email File`
+`Use Selected Customer Email` action added
+`Clear Attachment` action added
+`Refresh Attachments` retained
+Newly generated files still auto-select as email attachments
+Generated quote files prepare CRM-aware email drafts
+Generated contract files prepare CRM-aware email drafts
+Generated scope-of-work files prepare CRM-aware email drafts
+Backend `/email/send` endpoint remains unchanged
+No backend migration required
+No Vite proxy update required
+No credential persistence added
+Session-only SMTP security boundary retained
+Security Boundary
+Phase 14c does not change the credential model.
+SMTP settings remain frontend session-only state.
+SMTP settings are sent to the backend only when the user explicitly clicks `Send Email`.
+SMTP settings are not stored in PostgreSQL.
+SMTP settings are not stored in localStorage.
+Email attachment selection and draft prefill are convenience UI behavior only.
+Production persistent email linking remains planned for a later production-hardening layer.
+Verified Flow
+Sign in as Owner, Admin, or Staff.
+Save email settings for the session.
+Select a customer with an email address.
+Generate a quote file.
+Confirm the generated quote file auto-selects as the email attachment.
+Confirm the recipient pre-fills when customer email context is available.
+Confirm the subject/body prefill from quote context.
+Generate or select a contract file.
+Confirm the subject/body prefill from contract context.
+Generate or select a scope-of-work file.
+Confirm the subject/body prefill from scope-of-work context.
+Click `Email File` from a generated document.
+Confirm the email draft prepares with document context.
+Click `Use Selected Customer Email`.
+Confirm the selected customer email fills the To field when available.
+Click `Clear Attachment`.
+Confirm the attachment is removed without clearing the entire draft.
+Click `Refresh Attachments`.
+Confirm available generated documents remain selectable.
+Send an email.
+Confirm Phase 14b send/audit behavior still works.
+Confirm logout/session expiration/page refresh clears email settings and draft state.
+Important Phase 14c Boundary
+Phase 14c improves the frontend email workflow only. It does not add persistent email account linking, encrypted credential storage, or new backend send behavior.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1874,20 +1954,25 @@ STAFF_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -d '{"email":"staff@localcrm.dev","password":"Staff123!"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ```
-Manual Phase 14b Email Workflow Check
+Manual Phase 14c Email Workflow Check
 ```text
 1. Sign in through the frontend.
 2. Fill out Email Workflow Settings.
 3. Click Save Email Settings for Session.
-4. Generate a quote, contract, or scope-of-work file.
-5. Confirm the generated file auto-attaches to the email draft.
-6. Fill To, optional CC/BCC, subject, and body.
-7. Choose Plain Text or HTML body mode.
-8. Click Send Email.
-9. Confirm success or provider-specific failure feedback.
-10. Sign out and sign back in.
-11. Confirm email settings and draft fields are cleared.
-12. Refresh the browser and confirm SMTP settings do not persist.
+4. Select a customer with an email address.
+5. Generate a quote, contract, or scope-of-work file.
+6. Confirm the generated file auto-attaches to the email draft.
+7. Confirm recipient, subject, and body prefill when document/customer context is available.
+8. Click Email File on an existing generated document.
+9. Confirm the selected attachment display includes source-document context.
+10. Click Use Selected Customer Email and confirm the To field fills when available.
+11. Click Clear Attachment and confirm only the attachment is removed.
+12. Choose Plain Text or HTML body mode.
+13. Click Send Email.
+14. Confirm success or provider-specific failure feedback.
+15. Sign out and sign back in.
+16. Confirm email settings and draft fields are cleared.
+17. Refresh the browser and confirm SMTP settings do not persist.
 ```
 Validate Email Send Endpoint Without Real SMTP
 Expected result is `400 Bad Request` because SMTP host is intentionally blank.
@@ -2429,7 +2514,7 @@ Refresh Audit Review after send attempts for Admin/Owner users
 Keep SMTP credentials in frontend memory only
 Clear email settings and draft state on logout/session expiration/page refresh
 Later Phase:
-Production email configuration hardening
+Phase 14d: Production email configuration hardening
 Owner/Admin per-user email workflow setup
 Persistent email configuration with secure storage
 Encrypted secrets or external secrets provider integration
@@ -2446,7 +2531,7 @@ Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 14b complete — Backend session-only SMTP email sending, generated-document attachments, frontend Send Email workflow, attachment refresh/auto-attach behavior, and email send audit events are working.
+Phase 14c complete — CRM-aware email draft refinement, customer recipient prefill, quote/contract/scope-of-work subject/body prefill, Email File actions, clear attachment workflow, and session-only SMTP send behavior are working.
 ```
 ---
 👤 Author
