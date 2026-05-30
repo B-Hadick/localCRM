@@ -4,6 +4,7 @@ using System.Text;
 using System.Net;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Http;
 using Microsoft.IdentityModel.Tokens;
@@ -19,6 +20,7 @@ var builder = WebApplication.CreateBuilder(args);
 // --- SERVICES ---
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddDataProtection().SetApplicationName("LocalCRM");
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -467,6 +469,181 @@ app.MapPost("/users/admin", async (
         user.IsActive
     ));
 }).RequireAuthorization("OwnerOnly");
+
+
+app.MapGet("/email-settings/me", async (
+    LocalCrmDbContext db,
+    HttpContext httpContext) =>
+{
+    var caller = await GetCallerUserAsync(httpContext, db);
+    if (caller is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var settings = await db.UserEmailSettings
+        .FirstOrDefaultAsync(item => item.UserId == caller.Id);
+
+    return Results.Ok(ToUserEmailSettingsResponse(settings, caller));
+}).RequireAuthorization("AuthenticatedUser");
+
+app.MapGet("/email-settings/users/{userId:guid}", async (
+    Guid userId,
+    LocalCrmDbContext db) =>
+{
+    var user = await db.Users.FindAsync(userId);
+    if (user is null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+
+    var settings = await db.UserEmailSettings
+        .FirstOrDefaultAsync(item => item.UserId == userId);
+
+    return Results.Ok(ToUserEmailSettingsResponse(settings, user));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPut("/email-settings/users/{userId:guid}", async (
+    Guid userId,
+    SaveUserEmailSettingsRequest input,
+    LocalCrmDbContext db,
+    IDataProtectionProvider dataProtectionProvider,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var caller = await GetCallerUserAsync(httpContext, db);
+
+    if (caller is null || !IsAdminOrOwner(caller))
+    {
+        logger.LogWarning("Unauthorized email settings update attempt by {PerformedBy}", performedBy);
+        return Results.Forbid();
+    }
+
+    var targetUser = await db.Users.FindAsync(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+
+    if (!targetUser.IsActive)
+    {
+        return Results.BadRequest(new { error = "Cannot configure email settings for an inactive user" });
+    }
+
+    var validationError = ValidateUserEmailSettingsRequest(input);
+    if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    var nowUtc = DateTime.UtcNow;
+    var protector = dataProtectionProvider.CreateProtector("LocalCRM.UserEmailSettings.SmtpPassword.v1");
+
+    var settings = await db.UserEmailSettings
+        .FirstOrDefaultAsync(item => item.UserId == userId);
+
+    if (settings is null)
+    {
+        settings = new UserEmailSettings
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            CreatedByEmail = performedBy,
+            CreatedAtUtc = nowUtc
+        };
+
+        db.UserEmailSettings.Add(settings);
+    }
+
+    settings.SmtpHost = input.SmtpHost.Trim();
+    settings.SmtpPort = input.SmtpPort;
+    settings.UseTls = input.UseTls;
+    settings.FromEmail = input.FromEmail.Trim();
+    settings.FromDisplayName = input.FromDisplayName.Trim();
+    settings.Username = input.Username.Trim();
+
+    if (!string.IsNullOrWhiteSpace(input.Password))
+    {
+        settings.EncryptedPassword = protector.Protect(input.Password);
+    }
+    else if (string.IsNullOrWhiteSpace(settings.EncryptedPassword))
+    {
+        return Results.BadRequest(new { error = "SMTP password is required when creating new email settings" });
+    }
+
+    settings.IsConfigured = true;
+    settings.IsActive = input.IsActive;
+    settings.UpdatedByEmail = performedBy;
+    settings.UpdatedAtUtc = nowUtc;
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "UserEmailSettings",
+        EntityId = settings.Id.ToString(),
+        Action = "UserEmailSettingsSaved",
+        Details = $"Email settings saved for user '{targetUser.Email}'. Secret value was not exposed.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = nowUtc
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Email settings saved for user {TargetEmail} by {PerformedBy}", targetUser.Email, performedBy);
+
+    return Results.Ok(ToUserEmailSettingsResponse(settings, targetUser));
+}).RequireAuthorization("AdminOrOwner");
+
+app.MapPost("/email-settings/users/{userId:guid}/clear", async (
+    Guid userId,
+    LocalCrmDbContext db,
+    ILogger<Program> logger,
+    HttpContext httpContext) =>
+{
+    var performedBy = GetPerformedBy(httpContext);
+    var caller = await GetCallerUserAsync(httpContext, db);
+
+    if (caller is null || !IsAdminOrOwner(caller))
+    {
+        logger.LogWarning("Unauthorized email settings clear attempt by {PerformedBy}", performedBy);
+        return Results.Forbid();
+    }
+
+    var targetUser = await db.Users.FindAsync(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+
+    var settings = await db.UserEmailSettings
+        .FirstOrDefaultAsync(item => item.UserId == userId);
+
+    if (settings is null)
+    {
+        return Results.Ok(new { message = "No email settings were configured for this user" });
+    }
+
+    db.UserEmailSettings.Remove(settings);
+
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        EntityType = "UserEmailSettings",
+        EntityId = settings.Id.ToString(),
+        Action = "UserEmailSettingsCleared",
+        Details = $"Email settings cleared for user '{targetUser.Email}'.",
+        PerformedBy = performedBy,
+        CreatedAtUtc = DateTime.UtcNow
+    });
+
+    await db.SaveChangesAsync();
+
+    logger.LogInformation("Email settings cleared for user {TargetEmail} by {PerformedBy}", targetUser.Email, performedBy);
+
+    return Results.Ok(new { message = "Email settings cleared" });
+}).RequireAuthorization("AdminOrOwner");
+
 
 app.MapGet("/users", async (LocalCrmDbContext db) =>
 {
@@ -3143,6 +3320,96 @@ app.Run();
 
 
 
+
+static string ValidateUserEmailSettingsRequest(SaveUserEmailSettingsRequest input)
+{
+    if (string.IsNullOrWhiteSpace(input.SmtpHost))
+    {
+        return "SMTP host is required";
+    }
+
+    if (input.SmtpHost.Trim().Length > 255)
+    {
+        return "SMTP host cannot exceed 255 characters";
+    }
+
+    if (input.SmtpPort < 1 || input.SmtpPort > 65535)
+    {
+        return "SMTP port must be between 1 and 65535";
+    }
+
+    if (string.IsNullOrWhiteSpace(input.FromEmail))
+    {
+        return "From email is required";
+    }
+
+    if (!IsValidEmail(input.FromEmail.Trim()))
+    {
+        return "A valid From email address is required";
+    }
+
+    if (input.FromDisplayName.Trim().Length > 200)
+    {
+        return "From display name cannot exceed 200 characters";
+    }
+
+    if (input.Username.Trim().Length > 255)
+    {
+        return "SMTP username cannot exceed 255 characters";
+    }
+
+    if (!string.IsNullOrWhiteSpace(input.Password) && input.Password.Length > 1000)
+    {
+        return "SMTP password cannot exceed 1000 characters";
+    }
+
+    return "";
+}
+
+static UserEmailSettingsResponse ToUserEmailSettingsResponse(UserEmailSettings? settings, User user)
+{
+    if (settings is null)
+    {
+        return new UserEmailSettingsResponse(
+            user.Id,
+            user.Email,
+            false,
+            false,
+            "",
+            0,
+            true,
+            "",
+            "",
+            "",
+            false,
+            null,
+            false,
+            "",
+            null,
+            null
+        );
+    }
+
+    return new UserEmailSettingsResponse(
+        settings.UserId,
+        user.Email,
+        settings.IsConfigured,
+        settings.IsActive,
+        settings.SmtpHost,
+        settings.SmtpPort,
+        settings.UseTls,
+        settings.FromEmail,
+        settings.FromDisplayName,
+        settings.Username,
+        !string.IsNullOrWhiteSpace(settings.EncryptedPassword),
+        settings.LastTestedAtUtc,
+        settings.LastTestSucceeded,
+        settings.LastTestMessage,
+        settings.CreatedAtUtc,
+        settings.UpdatedAtUtc
+    );
+}
+
 static async Task<string> ValidateSendEmailRequestAsync(SendEmailRequest input, LocalCrmDbContext db)
 {
     if (string.IsNullOrWhiteSpace(input.SmtpHost))
@@ -5134,6 +5401,37 @@ static bool IsValidEmail(string email)
 
 
 
+
+
+public record SaveUserEmailSettingsRequest(
+    string SmtpHost,
+    int SmtpPort,
+    bool UseTls,
+    string FromEmail,
+    string FromDisplayName,
+    string Username,
+    string Password,
+    bool IsActive
+);
+
+public record UserEmailSettingsResponse(
+    Guid UserId,
+    string UserEmail,
+    bool IsConfigured,
+    bool IsActive,
+    string SmtpHost,
+    int SmtpPort,
+    bool UseTls,
+    string FromEmail,
+    string FromDisplayName,
+    string Username,
+    bool HasSavedPassword,
+    DateTime? LastTestedAtUtc,
+    bool LastTestSucceeded,
+    string LastTestMessage,
+    DateTime? CreatedAtUtc,
+    DateTime? UpdatedAtUtc
+);
 
 public record SendEmailRequest(
     string SmtpHost,

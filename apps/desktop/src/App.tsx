@@ -352,6 +352,37 @@ type SendEmailResponse = {
   attachedFileName: string;
 };
 
+type UserEmailSettings = {
+  userId: string;
+  userEmail: string;
+  isConfigured: boolean;
+  isActive: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  useTls: boolean;
+  fromEmail: string;
+  fromDisplayName: string;
+  username: string;
+  hasSavedPassword: boolean;
+  lastTestedAtUtc: string | null;
+  lastTestSucceeded: boolean;
+  lastTestMessage: string;
+  createdAtUtc: string | null;
+  updatedAtUtc: string | null;
+};
+
+type SavedEmailSettingsForm = {
+  userId: string;
+  smtpHost: string;
+  smtpPort: string;
+  useTls: boolean;
+  fromEmail: string;
+  fromDisplayName: string;
+  username: string;
+  password: string;
+  isActive: boolean;
+};
+
 const emptyCustomerForm: CustomerForm = {
   name: "",
   type: "Company",
@@ -493,6 +524,18 @@ const emptyEmailDraftForm: EmailDraftForm = {
   generatedDocumentId: ""
 };
 
+const emptySavedEmailSettingsForm: SavedEmailSettingsForm = {
+  userId: "",
+  smtpHost: "",
+  smtpPort: "587",
+  useTls: true,
+  fromEmail: "",
+  fromDisplayName: "",
+  username: "",
+  password: "",
+  isActive: true
+};
+
 const emptyDashboardSummary: DashboardSummary = {
   totalCustomers: 0,
   activeCustomers: 0,
@@ -572,6 +615,10 @@ function App() {
   const [emailConfigForm, setEmailConfigForm] = useState<EmailConfigForm>(emptyEmailConfigForm);
   const [emailDraftForm, setEmailDraftForm] = useState<EmailDraftForm>(emptyEmailDraftForm);
   const [emailConfigSavedForSession, setEmailConfigSavedForSession] = useState(false);
+  const [myEmailSettings, setMyEmailSettings] = useState<UserEmailSettings | null>(null);
+  const [selectedUserEmailSettings, setSelectedUserEmailSettings] = useState<UserEmailSettings | null>(null);
+  const [savedEmailSettingsForm, setSavedEmailSettingsForm] =
+    useState<SavedEmailSettingsForm>(emptySavedEmailSettingsForm);
 
   const [staffUserForm, setStaffUserForm] = useState<StaffUserForm>(emptyStaffUserForm);
   const [adminUserForm, setAdminUserForm] = useState<AdminUserForm>(emptyAdminUserForm);
@@ -590,6 +637,18 @@ function App() {
   const maskedEmailPassword = emailConfigForm.password
     ? "Password set for this session"
     : "No password set";
+
+  const savedEmailSettingsStatus = myEmailSettings?.isConfigured
+    ? myEmailSettings.isActive
+      ? "Saved Config Active"
+      : "Saved Config Inactive"
+    : "No Saved Config";
+
+  const selectedUserEmailSettingsStatus = selectedUserEmailSettings?.isConfigured
+    ? selectedUserEmailSettings.isActive
+      ? "Configured"
+      : "Configured / Inactive"
+    : "Not Configured";
 
   const emailAttachableDocuments = useMemo(() => {
     const byId = new Map<string, GeneratedDocument>();
@@ -823,6 +882,58 @@ function App() {
 
     if (input.username.trim() && !input.password) {
       return "SMTP password is required when a username is provided.";
+    }
+
+    return "";
+  }
+
+  function validateSavedEmailSettingsForm(input: SavedEmailSettingsForm, requiresPassword: boolean) {
+    const smtpHost = input.smtpHost.trim();
+    const smtpPort = Number(input.smtpPort);
+    const fromEmail = input.fromEmail.trim();
+
+    if (!input.userId) {
+      return "Select a user before saving email settings.";
+    }
+
+    if (!smtpHost) {
+      return "SMTP host is required.";
+    }
+
+    if (smtpHost.length > 255) {
+      return "SMTP host cannot exceed 255 characters.";
+    }
+
+    if (!input.smtpPort.trim()) {
+      return "SMTP port is required.";
+    }
+
+    if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+      return "SMTP port must be a whole number between 1 and 65535.";
+    }
+
+    if (!fromEmail) {
+      return "From email is required.";
+    }
+
+    if (!isValidEmail(fromEmail)) {
+      return "Enter a valid From email address.";
+    }
+
+    if (input.fromDisplayName.trim().length > 200) {
+      return "From display name cannot exceed 200 characters.";
+    }
+
+    if (input.username.trim().length > 255) {
+      return "SMTP username cannot exceed 255 characters.";
+    }
+
+    if (requiresPassword && !input.password) {
+      return "SMTP password/app password is required for new saved email settings.";
+    }
+
+    if (input.password.length > 1000) {
+      return "SMTP password/app password cannot exceed 1000 characters.";
     }
 
     return "";
@@ -1197,6 +1308,9 @@ function App() {
     setEmailConfigForm(emptyEmailConfigForm);
     setEmailDraftForm(emptyEmailDraftForm);
     setEmailConfigSavedForSession(false);
+    setMyEmailSettings(null);
+    setSelectedUserEmailSettings(null);
+    setSavedEmailSettingsForm(emptySavedEmailSettingsForm);
     setStatus(message, "error");
   }
 
@@ -1315,6 +1429,9 @@ function App() {
     setEmailConfigForm(emptyEmailConfigForm);
     setEmailDraftForm(emptyEmailDraftForm);
     setEmailConfigSavedForSession(false);
+    setMyEmailSettings(null);
+    setSelectedUserEmailSettings(null);
+    setSavedEmailSettingsForm(emptySavedEmailSettingsForm);
     setStatus("Signed out.", "info");
   }
 
@@ -1462,6 +1579,80 @@ function App() {
       console.error(error);
       setUsers([]);
       setStatus("Failed to load users", "error");
+    }
+  }
+
+  async function loadMyEmailSettings() {
+    if (!currentUser) {
+      setMyEmailSettings(null);
+      return;
+    }
+
+    try {
+      const response = await fetch("/email-settings/me", {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as UserEmailSettings;
+      setMyEmailSettings(data);
+    } catch (error) {
+      console.error(error);
+      setMyEmailSettings(null);
+      setStatus("Failed to load saved email settings status", "error");
+    }
+  }
+
+  async function loadUserEmailSettings(userId: string) {
+    if (!currentUser || !isAdminOrOwner) {
+      setSelectedUserEmailSettings(null);
+      setSavedEmailSettingsForm(emptySavedEmailSettingsForm);
+      return;
+    }
+
+    if (!userId) {
+      setSelectedUserEmailSettings(null);
+      setSavedEmailSettingsForm(emptySavedEmailSettingsForm);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/email-settings/users/${userId}`, {
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as UserEmailSettings;
+      setSelectedUserEmailSettings(data);
+      setSavedEmailSettingsForm({
+        userId,
+        smtpHost: data.smtpHost || "",
+        smtpPort: data.smtpPort ? String(data.smtpPort) : "587",
+        useTls: data.useTls,
+        fromEmail: data.fromEmail || data.userEmail || "",
+        fromDisplayName: data.fromDisplayName || "",
+        username: data.username || "",
+        password: "",
+        isActive: data.isActive || !data.isConfigured
+      });
+    } catch (error) {
+      console.error(error);
+      setSelectedUserEmailSettings(null);
+      setStatus("Failed to load selected user's email settings", "error");
     }
   }
 
@@ -2044,6 +2235,10 @@ function App() {
       loadGlobalAuditLogs(),
       loadDocumentTemplates()
     ]);
+
+    if (savedEmailSettingsForm.userId) {
+      await loadUserEmailSettings(savedEmailSettingsForm.userId);
+    }
   }
 
   useEffect(() => {
@@ -2053,6 +2248,7 @@ function App() {
       loadContracts();
       loadScopesOfWork();
       loadGeneratedDocuments();
+      loadMyEmailSettings();
     }
   }, [
     currentUser,
@@ -3095,6 +3291,169 @@ function App() {
     );
   }
 
+  async function handleSavedEmailSettingsUserChange(userId: string) {
+    setSavedEmailSettingsForm({
+      ...emptySavedEmailSettingsForm,
+      userId
+    });
+    setSelectedUserEmailSettings(null);
+
+    if (userId) {
+      await loadUserEmailSettings(userId);
+    }
+  }
+
+  async function handleSavedEmailSettingsSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can save persistent email settings.", "error");
+      return;
+    }
+
+    const requiresPassword = !selectedUserEmailSettings?.hasSavedPassword;
+    const validationError = validateSavedEmailSettingsForm(savedEmailSettingsForm, requiresPassword);
+
+    if (validationError) {
+      setStatus(validationError, "error");
+      return;
+    }
+
+    setStatus("Saving user email settings...", "info");
+
+    try {
+      const response = await fetch(`/email-settings/users/${savedEmailSettingsForm.userId}`, {
+        method: "PUT",
+        headers: getJsonAuthHeaders(),
+        body: JSON.stringify({
+          smtpHost: savedEmailSettingsForm.smtpHost.trim(),
+          smtpPort: Number(savedEmailSettingsForm.smtpPort),
+          useTls: savedEmailSettingsForm.useTls,
+          fromEmail: savedEmailSettingsForm.fromEmail.trim(),
+          fromDisplayName: savedEmailSettingsForm.fromDisplayName.trim(),
+          username: savedEmailSettingsForm.username.trim(),
+          password: savedEmailSettingsForm.password,
+          isActive: savedEmailSettingsForm.isActive
+        })
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const data = (await response.json()) as UserEmailSettings;
+      setSelectedUserEmailSettings(data);
+      setSavedEmailSettingsForm((current) => ({
+        ...current,
+        password: "",
+        isActive: data.isActive
+      }));
+
+      if (currentUser.id === data.userId) {
+        setMyEmailSettings(data);
+      }
+
+      setStatus(`Saved email settings for ${data.userEmail}. Password was not returned to the frontend.`, "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to save email settings.", "error");
+    }
+  }
+
+  async function clearSavedEmailSettings() {
+    if (!currentUser || !isAdminOrOwner) {
+      setStatus("Only Admin or Owner users can clear persistent email settings.", "error");
+      return;
+    }
+
+    if (!savedEmailSettingsForm.userId) {
+      setStatus("Select a user before clearing saved email settings.", "error");
+      return;
+    }
+
+    setStatus("Clearing saved email settings...", "info");
+
+    try {
+      const response = await fetch(`/email-settings/users/${savedEmailSettingsForm.userId}/clear`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+
+      if (handleUnauthorizedResponse(response)) {
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody.error || errorMessage;
+        } catch {
+          // Keep fallback message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const userId = savedEmailSettingsForm.userId;
+      setSelectedUserEmailSettings(null);
+      setSavedEmailSettingsForm({
+        ...emptySavedEmailSettingsForm,
+        userId
+      });
+
+      if (currentUser.id === userId) {
+        await loadMyEmailSettings();
+      }
+
+      setStatus("Saved email settings cleared.", "success");
+
+      if (isAdminOrOwner) {
+        await loadGlobalAuditLogs();
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : "Failed to clear saved email settings.", "error");
+    }
+  }
+
+  function copySavedEmailSettingsToSession() {
+    if (!selectedUserEmailSettings?.isConfigured) {
+      setStatus("Selected user does not have saved email settings to copy.", "error");
+      return;
+    }
+
+    setEmailConfigForm({
+      smtpHost: selectedUserEmailSettings.smtpHost,
+      smtpPort: String(selectedUserEmailSettings.smtpPort || 587),
+      useTls: selectedUserEmailSettings.useTls,
+      fromEmail: selectedUserEmailSettings.fromEmail,
+      fromDisplayName: selectedUserEmailSettings.fromDisplayName,
+      username: selectedUserEmailSettings.username,
+      password: ""
+    });
+    setEmailConfigSavedForSession(false);
+    setStatus("Saved non-secret settings copied to the session email form. Re-enter password to send with session override.", "info");
+  }
+
   function handleEmailConfigSubmit(event: FormEvent) {
     event.preventDefault();
 
@@ -3895,6 +4254,204 @@ function App() {
       <div className={`status-banner status-${statusType}`}>
         {statusMessage}
       </div>
+
+      <section className="layout-grid">
+        <section className="card">
+          <div className="section-header compact-header">
+            <h2>Saved Email Configuration</h2>
+            <span className={`status-chip ${myEmailSettings?.isConfigured && myEmailSettings?.isActive ? "status-chip-active" : "status-chip-inactive"}`}>
+              {savedEmailSettingsStatus}
+            </span>
+          </div>
+
+          <div className="compact-content">
+            <strong>Current user:</strong> {currentUser.email}
+          </div>
+
+          <div className="muted-text compact-meta">
+            {myEmailSettings?.isConfigured
+              ? `Saved sender: ${myEmailSettings.fromEmail || "—"} · SMTP: ${myEmailSettings.smtpHost || "—"}:${myEmailSettings.smtpPort || "—"} · Password saved: ${myEmailSettings.hasSavedPassword ? "yes" : "no"}`
+              : "No saved email configuration exists for this user yet."}
+          </div>
+
+          <div className="auth-hint">
+            Saved email settings are stored server-side. The SMTP password is encrypted on the backend and is never returned to the frontend.
+          </div>
+
+          <div className="note-actions-row">
+            <button type="button" onClick={loadMyEmailSettings}>
+              Refresh My Email Status
+            </button>
+          </div>
+        </section>
+
+        {isAdminOrOwner && (
+          <section className="card">
+            <div className="section-header compact-header">
+              <h2>Admin Email Configuration</h2>
+              <span className={`status-chip ${selectedUserEmailSettings?.isConfigured ? "status-chip-active" : "status-chip-inactive"}`}>
+                {selectedUserEmailSettingsStatus}
+              </span>
+            </div>
+
+            <form className="customer-form" onSubmit={handleSavedEmailSettingsSubmit}>
+              <div className="form-grid">
+                <label>
+                  User
+                  <select
+                    value={savedEmailSettingsForm.userId}
+                    onChange={(e) => handleSavedEmailSettingsUserChange(e.target.value)}
+                  >
+                    <option value="">Select user</option>
+                    {users.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.displayName} · {user.email} · {user.role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  SMTP Host
+                  <input
+                    value={savedEmailSettingsForm.smtpHost}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, smtpHost: e.target.value })
+                    }
+                    placeholder="smtp.example.com"
+                  />
+                </label>
+
+                <label>
+                  SMTP Port
+                  <input
+                    value={savedEmailSettingsForm.smtpPort}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, smtpPort: e.target.value })
+                    }
+                    placeholder="587"
+                  />
+                </label>
+
+                <label>
+                  Use TLS
+                  <select
+                    value={savedEmailSettingsForm.useTls ? "true" : "false"}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({
+                        ...savedEmailSettingsForm,
+                        useTls: e.target.value === "true"
+                      })
+                    }
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                </label>
+
+                <label>
+                  From Email
+                  <input
+                    value={savedEmailSettingsForm.fromEmail}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, fromEmail: e.target.value })
+                    }
+                    placeholder="sender@example.com"
+                  />
+                </label>
+
+                <label>
+                  From Display Name
+                  <input
+                    value={savedEmailSettingsForm.fromDisplayName}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, fromDisplayName: e.target.value })
+                    }
+                    placeholder="LocalCRM"
+                  />
+                </label>
+
+                <label>
+                  SMTP Username
+                  <input
+                    value={savedEmailSettingsForm.username}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, username: e.target.value })
+                    }
+                    placeholder="sender@example.com"
+                  />
+                </label>
+
+                <label>
+                  SMTP Password / App Password
+                  <input
+                    type="password"
+                    value={savedEmailSettingsForm.password}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({ ...savedEmailSettingsForm, password: e.target.value })
+                    }
+                    placeholder={
+                      selectedUserEmailSettings?.hasSavedPassword
+                        ? "Leave blank to keep saved password"
+                        : "Required for new saved config"
+                    }
+                  />
+                </label>
+
+                <label>
+                  Active
+                  <select
+                    value={savedEmailSettingsForm.isActive ? "true" : "false"}
+                    onChange={(e) =>
+                      setSavedEmailSettingsForm({
+                        ...savedEmailSettingsForm,
+                        isActive: e.target.value === "true"
+                      })
+                    }
+                  >
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                  </select>
+                </label>
+
+                <label>
+                  Saved Password
+                  <input
+                    value={selectedUserEmailSettings?.hasSavedPassword ? "Saved on backend" : "No saved password"}
+                    readOnly
+                  />
+                </label>
+              </div>
+
+              <div className="auth-hint">
+                Admin/Owner saved email configuration persists per user. Passwords are encrypted server-side and never displayed back in the UI.
+              </div>
+
+              <div className="note-actions-row">
+                <button type="submit" disabled={!savedEmailSettingsForm.userId}>
+                  Save User Email Settings
+                </button>
+
+                <button
+                  type="button"
+                  onClick={clearSavedEmailSettings}
+                  disabled={!savedEmailSettingsForm.userId || !selectedUserEmailSettings?.isConfigured}
+                >
+                  Clear Saved Settings
+                </button>
+
+                <button
+                  type="button"
+                  onClick={copySavedEmailSettingsToSession}
+                  disabled={!selectedUserEmailSettings?.isConfigured}
+                >
+                  Copy Non-Secret Settings to Session
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+      </section>
 
       <section className="layout-grid">
         <section className="card">

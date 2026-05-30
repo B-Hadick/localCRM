@@ -19,6 +19,7 @@ public class LocalCrmDbContext : DbContext
     public DbSet<ScopeOfWork> ScopeOfWorks => Set<ScopeOfWork>();
     public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
     public DbSet<GeneratedDocument> GeneratedDocuments => Set<GeneratedDocument>();
+    public DbSet<UserEmailSettings> UserEmailSettings => Set<UserEmailSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -193,6 +194,25 @@ public class LocalCrmDbContext : DbContext
             entity.Property(x => x.FileName).HasMaxLength(255);
             entity.Property(x => x.ContentType).HasMaxLength(150);
             entity.Property(x => x.GeneratedBy).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<UserEmailSettings>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.HasIndex(x => x.UserId).IsUnique();
+            entity.HasIndex(x => x.FromEmail);
+            entity.HasIndex(x => x.IsConfigured);
+            entity.HasIndex(x => x.IsActive);
+
+            entity.Property(x => x.SmtpHost).HasMaxLength(255);
+            entity.Property(x => x.FromEmail).HasMaxLength(200);
+            entity.Property(x => x.FromDisplayName).HasMaxLength(200);
+            entity.Property(x => x.Username).HasMaxLength(255);
+            entity.Property(x => x.EncryptedPassword).HasMaxLength(4000);
+            entity.Property(x => x.CreatedByEmail).HasMaxLength(200);
+            entity.Property(x => x.UpdatedByEmail).HasMaxLength(200);
+            entity.Property(x => x.LastTestMessage).HasMaxLength(1000);
         });
     }
 }

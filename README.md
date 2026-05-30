@@ -2522,12 +2522,26 @@ Per-user send configuration without repeatedly entering SMTP credentials
 Later Phase:
 DOCX/PDF generated output expansion
 Later Phases
-Phase 15: Calendar/ICS export
-Phase 16: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
-Phase 17: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts. Accounts Payable sorting and searching by vendor name, requisition creator, requisition number, purchase order number, date. Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phone number, invoice number, invoice status, contract number, date
-Phase 18: Backup/export tools
-Phase 19: Tenant/custom branding support
-Phase 20: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post-login splash page displays section tabs/buttons, pending requests, and audit log
+Phase 15a:
+- Add UserEmailSettings model/table
+- Store SMTP host, port, TLS, from email, display name, username
+- Store encrypted SMTP password/app password
+- Add config status endpoint
+- Do not expose secret values in responses
+Phase 15b:
+- Owner/Admin create/update per-user email config
+- Owner/Admin clear/reset per-user email config
+- User can see whether they have email configured
+Phase 15c:
+- Update /email/send to use saved config by default
+- Optional session override remains available for development/testing
+- Frontend no longer requires SMTP fields when saved config exists
+Phase 16: Calendar/ICS export
+Phase 17: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
+Phase 18: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts. Accounts Payable sorting and searching by vendor name, requisition creator, requisition number, purchase order number, date. Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phone number, invoice number, invoice status, contract number, date
+Phase 19: Backup/export tools
+Phase 20: Tenant/custom branding support
+Phase 21: Layout Clean-up and Streamlining. Tabbed sections for ease of navigation; post-login splash page displays section tabs/buttons, pending requests, and audit log
 📌 Status
 Current milestone:
 ```text

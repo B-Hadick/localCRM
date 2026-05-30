@@ -62,6 +62,10 @@ export default defineConfig({
       "/email": {
         target: "http://localhost:8080",
         changeOrigin: true
+      },
+      "/email-settings": {
+        target: "http://localhost:8080",
+        changeOrigin: true
       }
     }
   }
