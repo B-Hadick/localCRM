@@ -343,6 +343,7 @@ type EmailDraftForm = {
   body: string;
   isHtml: boolean;
   generatedDocumentId: string;
+  useSavedEmailSettings: boolean;
 };
 
 type SendEmailResponse = {
@@ -521,7 +522,8 @@ const emptyEmailDraftForm: EmailDraftForm = {
   subject: "",
   body: "",
   isHtml: false,
-  generatedDocumentId: ""
+  generatedDocumentId: "",
+  useSavedEmailSettings: true
 };
 
 const emptySavedEmailSettingsForm: SavedEmailSettingsForm = {
@@ -649,6 +651,17 @@ function App() {
       ? "Configured"
       : "Configured / Inactive"
     : "Not Configured";
+
+  const canUseSavedEmailSettings =
+    Boolean(myEmailSettings?.isConfigured && myEmailSettings?.isActive && myEmailSettings?.hasSavedPassword);
+
+  const emailSendModeStatus = emailDraftForm.useSavedEmailSettings
+    ? canUseSavedEmailSettings
+      ? "Saved Config Ready"
+      : "Saved Config Unavailable"
+    : emailConfigSavedForSession
+      ? "Session Override Ready"
+      : "Session Override Missing";
 
   const emailAttachableDocuments = useMemo(() => {
     const byId = new Map<string, GeneratedDocument>();
@@ -3279,7 +3292,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => attachGeneratedDocumentToEmail(document)}
-                  disabled={!emailConfigSavedForSession}
+                  disabled={emailDraftForm.useSavedEmailSettings ? !canUseSavedEmailSettings : !emailConfigSavedForSession}
                 >
                   Email File
                 </button>
@@ -3515,15 +3528,22 @@ function App() {
       return;
     }
 
-    if (!emailConfigSavedForSession) {
-      setStatus("Save session email settings before sending email.", "error");
-      return;
-    }
+    if (emailDraftForm.useSavedEmailSettings) {
+      if (!canUseSavedEmailSettings) {
+        setStatus("Saved email settings are not configured, active, and password-backed for this user.", "error");
+        return;
+      }
+    } else {
+      if (!emailConfigSavedForSession) {
+        setStatus("Save session email settings before sending email with session override.", "error");
+        return;
+      }
 
-    const configValidationError = validateEmailConfigForm(emailConfigForm);
-    if (configValidationError) {
-      setStatus(configValidationError, "error");
-      return;
+      const configValidationError = validateEmailConfigForm(emailConfigForm);
+      if (configValidationError) {
+        setStatus(configValidationError, "error");
+        return;
+      }
     }
 
     const draftValidationError = validateEmailDraftForm(emailDraftForm);
@@ -3539,20 +3559,21 @@ function App() {
         method: "POST",
         headers: getJsonAuthHeaders(),
         body: JSON.stringify({
-          smtpHost: emailConfigForm.smtpHost.trim(),
-          smtpPort: Number(emailConfigForm.smtpPort),
-          useTls: emailConfigForm.useTls,
-          fromEmail: emailConfigForm.fromEmail.trim(),
-          fromDisplayName: emailConfigForm.fromDisplayName.trim(),
-          username: emailConfigForm.username.trim(),
-          password: emailConfigForm.password,
+          smtpHost: emailDraftForm.useSavedEmailSettings ? "" : emailConfigForm.smtpHost.trim(),
+          smtpPort: emailDraftForm.useSavedEmailSettings ? 0 : Number(emailConfigForm.smtpPort),
+          useTls: emailDraftForm.useSavedEmailSettings ? true : emailConfigForm.useTls,
+          fromEmail: emailDraftForm.useSavedEmailSettings ? "" : emailConfigForm.fromEmail.trim(),
+          fromDisplayName: emailDraftForm.useSavedEmailSettings ? "" : emailConfigForm.fromDisplayName.trim(),
+          username: emailDraftForm.useSavedEmailSettings ? "" : emailConfigForm.username.trim(),
+          password: emailDraftForm.useSavedEmailSettings ? "" : emailConfigForm.password,
           to: emailDraftForm.to.trim(),
           cc: emailDraftForm.cc.trim(),
           bcc: emailDraftForm.bcc.trim(),
           subject: emailDraftForm.subject.trim(),
           body: emailDraftForm.body,
           isHtml: emailDraftForm.isHtml,
-          generatedDocumentId: emailDraftForm.generatedDocumentId || null
+          generatedDocumentId: emailDraftForm.generatedDocumentId || null,
+          useSavedEmailSettings: emailDraftForm.useSavedEmailSettings
         })
       });
 
@@ -3578,8 +3599,8 @@ function App() {
       setEmailDraftForm(emptyEmailDraftForm);
       setStatus(
         result.attachedFileName
-          ? `Email sent successfully with attachment "${result.attachedFileName}".`
-          : "Email sent successfully.",
+          ? `${result.message} Attached "${result.attachedFileName}".`
+          : result.message || "Email sent successfully.",
         "success"
       );
 
@@ -4275,7 +4296,7 @@ function App() {
           </div>
 
           <div className="auth-hint">
-            Saved email settings are stored server-side. The SMTP password is encrypted on the backend and is never returned to the frontend.
+            Saved email settings are stored server-side. The SMTP password is encrypted on the backend, never returned to the frontend, and can now be used directly for sending.
           </div>
 
           <div className="note-actions-row">
@@ -4537,7 +4558,7 @@ function App() {
             </div>
 
             <div className="auth-hint">
-              Phase 14b keeps email settings in memory only. They are not saved to localStorage, not saved to PostgreSQL, and clear on logout/session expiration/page refresh.
+              Session override settings stay in memory only. Use this only for testing or temporary sender overrides. Saved per-user settings are now the default send path when available.
             </div>
 
             <div className="note-actions-row">
@@ -4553,11 +4574,58 @@ function App() {
         <section className="card">
           <div className="section-header compact-header">
             <h2>Email Send</h2>
-            <span className="status-chip status-chip-active">Phase 14a</span>
+            <span className={`status-chip ${
+              emailDraftForm.useSavedEmailSettings
+                ? canUseSavedEmailSettings
+                  ? "status-chip-active"
+                  : "status-chip-inactive"
+                : emailConfigSavedForSession
+                  ? "status-chip-active"
+                  : "status-chip-inactive"
+            }`}>
+              {emailSendModeStatus}
+            </span>
           </div>
 
           <form className="customer-form" onSubmit={handleEmailDraftSave}>
             <div className="form-grid">
+              <label>
+                Send Mode
+                <select
+                  value={emailDraftForm.useSavedEmailSettings ? "saved" : "session"}
+                  onChange={(e) =>
+                    setEmailDraftForm({
+                      ...emailDraftForm,
+                      useSavedEmailSettings: e.target.value === "saved"
+                    })
+                  }
+                >
+                  <option value="saved">Use Saved Email Settings</option>
+                  <option value="session">Use Session Override</option>
+                </select>
+              </label>
+
+              <label>
+                Send Readiness
+                <input value={emailSendModeStatus} readOnly />
+              </label>
+
+              <label>
+                Sender Source
+                <input
+                  value={
+                    emailDraftForm.useSavedEmailSettings
+                      ? myEmailSettings?.isConfigured
+                        ? `${myEmailSettings.fromEmail || "Saved sender"} via saved config`
+                        : "No saved sender configured"
+                      : emailConfigSavedForSession
+                        ? `${emailConfigForm.fromEmail || "Session sender"} via session override`
+                        : "No session sender configured"
+                  }
+                  readOnly
+                />
+              </label>
+
               <label>
                 To
                 <input
@@ -4660,12 +4728,15 @@ function App() {
             </label>
 
             <div className="auth-hint">
-              Phase 14c uses the Phase 14b backend send endpoint with session-only SMTP settings. Settings are sent only with this explicit send request and are not persisted by the CRM.
+              Phase 15b sends with saved per-user email settings by default. Choose Session Override only when testing temporary SMTP values; session override values are still never persisted.
             </div>
 
             <div className="note-actions-row">
-              <button type="submit" disabled={!emailConfigSavedForSession}>
-                Send Email
+              <button
+                type="submit"
+                disabled={emailDraftForm.useSavedEmailSettings ? !canUseSavedEmailSettings : !emailConfigSavedForSession}
+              >
+                {emailDraftForm.useSavedEmailSettings ? "Send Email with Saved Settings" : "Send Email with Session Override"}
               </button>
 
               <button type="button" onClick={() => setEmailDraftForm(emptyEmailDraftForm)}>

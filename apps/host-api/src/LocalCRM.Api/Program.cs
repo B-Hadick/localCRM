@@ -2165,13 +2165,43 @@ app.MapPost("/scopes-of-work/{scopeId:guid}/status", async (
 app.MapPost("/email/send", async (
     SendEmailRequest input,
     LocalCrmDbContext db,
+    IDataProtectionProvider dataProtectionProvider,
     ILogger<Program> logger,
     HttpContext httpContext) =>
 {
     var performedBy = GetPerformedBy(httpContext);
     var nowUtc = DateTime.UtcNow;
+    var caller = await GetCallerUserAsync(httpContext, db);
 
-    var validationError = await ValidateSendEmailRequestAsync(input, db);
+    if (caller is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var settingsResolution = await ResolveEmailSendSettingsAsync(input, caller, db, dataProtectionProvider);
+    if (!string.IsNullOrWhiteSpace(settingsResolution.Error) || settingsResolution.Settings is null)
+    {
+        var validationMessage = settingsResolution.Error ?? "Unable to resolve email send settings";
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "Email",
+            EntityId = input.GeneratedDocumentId?.ToString() ?? "",
+            Action = "EmailSendValidationFailed",
+            Details = $"Email send validation failed. Reason: {validationMessage}",
+            PerformedBy = performedBy,
+            CreatedAtUtc = nowUtc
+        });
+
+        await db.SaveChangesAsync();
+
+        return Results.BadRequest(new { error = validationMessage });
+    }
+
+    var sendSettings = settingsResolution.Settings;
+
+    var validationError = await ValidateSendEmailRequestAsync(input, db, sendSettings);
     if (!string.IsNullOrWhiteSpace(validationError))
     {
         db.AuditLogs.Add(new AuditLog
@@ -2202,10 +2232,10 @@ app.MapPost("/email/send", async (
 
     var message = new MimeMessage();
 
-    var fromDisplayName = input.FromDisplayName.Trim();
+    var fromDisplayName = sendSettings.FromDisplayName.Trim();
     var fromMailbox = string.IsNullOrWhiteSpace(fromDisplayName)
-        ? new MailboxAddress(input.FromEmail.Trim(), input.FromEmail.Trim())
-        : new MailboxAddress(fromDisplayName, input.FromEmail.Trim());
+        ? new MailboxAddress(sendSettings.FromEmail.Trim(), sendSettings.FromEmail.Trim())
+        : new MailboxAddress(fromDisplayName, sendSettings.FromEmail.Trim());
 
     message.From.Add(fromMailbox);
 
@@ -2245,15 +2275,15 @@ app.MapPost("/email/send", async (
             Timeout = 30000
         };
 
-        var secureSocketOptions = input.UseTls
+        var secureSocketOptions = sendSettings.UseTls
             ? SecureSocketOptions.StartTls
             : SecureSocketOptions.Auto;
 
-        await smtpClient.ConnectAsync(input.SmtpHost.Trim(), input.SmtpPort, secureSocketOptions);
+        await smtpClient.ConnectAsync(sendSettings.SmtpHost.Trim(), sendSettings.SmtpPort, secureSocketOptions);
 
-        if (!string.IsNullOrWhiteSpace(input.Username))
+        if (!string.IsNullOrWhiteSpace(sendSettings.Username))
         {
-            await smtpClient.AuthenticateAsync(input.Username.Trim(), input.Password);
+            await smtpClient.AuthenticateAsync(sendSettings.Username.Trim(), sendSettings.Password);
         }
 
         await smtpClient.SendAsync(message);
@@ -2266,8 +2296,8 @@ app.MapPost("/email/send", async (
             EntityId = input.GeneratedDocumentId?.ToString() ?? "",
             Action = "EmailSent",
             Details = generatedDocument is null
-                ? $"Email sent to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. No attachment."
-                : $"Email sent to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. Attached generated document '{generatedDocument.FileName}'.",
+                ? $"Email sent using {settingsResolution.Source} settings to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. No attachment."
+                : $"Email sent using {settingsResolution.Source} settings to {CountEmailRecipients(input)} recipient(s) with subject '{SafeAuditSnippet(input.Subject)}'. Attached generated document '{generatedDocument.FileName}'.",
             PerformedBy = performedBy,
             CreatedAtUtc = nowUtc
         });
@@ -2275,14 +2305,15 @@ app.MapPost("/email/send", async (
         await db.SaveChangesAsync();
 
         logger.LogInformation(
-            "Email sent by {PerformedBy} to {RecipientCount} recipient(s). Attachment: {AttachmentName}",
+            "Email sent by {PerformedBy} using {SettingsSource} settings to {RecipientCount} recipient(s). Attachment: {AttachmentName}",
             performedBy,
+            settingsResolution.Source,
             CountEmailRecipients(input),
             generatedDocument?.FileName ?? "None");
 
         return Results.Ok(new SendEmailResponse(
             true,
-            "Email sent successfully.",
+            $"Email sent successfully using {settingsResolution.Source} settings.",
             generatedDocument?.Id,
             generatedDocument?.FileName ?? ""
         ));
@@ -2296,8 +2327,8 @@ app.MapPost("/email/send", async (
             EntityId = input.GeneratedDocumentId?.ToString() ?? "",
             Action = "EmailSendFailed",
             Details = generatedDocument is null
-                ? $"Email send failed for {CountEmailRecipients(input)} recipient(s). Error: {SafeAuditSnippet(error.Message)}"
-                : $"Email send failed for {CountEmailRecipients(input)} recipient(s) with generated document '{generatedDocument.FileName}'. Error: {SafeAuditSnippet(error.Message)}",
+                ? $"Email send failed using {settingsResolution.Source} settings for {CountEmailRecipients(input)} recipient(s). Error: {SafeAuditSnippet(error.Message)}"
+                : $"Email send failed using {settingsResolution.Source} settings for {CountEmailRecipients(input)} recipient(s) with generated document '{generatedDocument.FileName}'. Error: {SafeAuditSnippet(error.Message)}",
             PerformedBy = performedBy,
             CreatedAtUtc = nowUtc
         });
@@ -2306,13 +2337,14 @@ app.MapPost("/email/send", async (
 
         logger.LogWarning(
             error,
-            "Email send failed for {PerformedBy} with attachment {AttachmentName}",
+            "Email send failed for {PerformedBy} using {SettingsSource} settings with attachment {AttachmentName}",
             performedBy,
+            settingsResolution.Source,
             generatedDocument?.FileName ?? "None");
 
         return Results.BadRequest(new
         {
-            error = "Email send failed. Check SMTP settings, credentials, recipient address, and provider requirements."
+            error = "Email send failed. Check saved/session SMTP settings, credentials, recipient address, and provider requirements."
         });
     }
 }).RequireAuthorization("AuthenticatedUser");
@@ -3410,24 +3442,115 @@ static UserEmailSettingsResponse ToUserEmailSettingsResponse(UserEmailSettings? 
     );
 }
 
-static async Task<string> ValidateSendEmailRequestAsync(SendEmailRequest input, LocalCrmDbContext db)
+static async Task<EmailSendSettingsResolution> ResolveEmailSendSettingsAsync(
+    SendEmailRequest input,
+    User caller,
+    LocalCrmDbContext db,
+    IDataProtectionProvider dataProtectionProvider)
 {
-    if (string.IsNullOrWhiteSpace(input.SmtpHost))
+    if (HasSessionEmailSettings(input))
+    {
+        return new EmailSendSettingsResolution(
+            "",
+            "session override",
+            new EmailSendSmtpSettings(
+                input.SmtpHost.Trim(),
+                input.SmtpPort,
+                input.UseTls,
+                input.FromEmail.Trim(),
+                input.FromDisplayName.Trim(),
+                input.Username.Trim(),
+                input.Password
+            )
+        );
+    }
+
+    var settings = await db.UserEmailSettings
+        .FirstOrDefaultAsync(item => item.UserId == caller.Id);
+
+    if (settings is null || !settings.IsConfigured)
+    {
+        return new EmailSendSettingsResolution(
+            "No saved email settings are configured for the signed-in user and no session SMTP override was supplied",
+            "saved",
+            null
+        );
+    }
+
+    if (!settings.IsActive)
+    {
+        return new EmailSendSettingsResolution(
+            "Saved email settings are inactive for the signed-in user",
+            "saved",
+            null
+        );
+    }
+
+    if (string.IsNullOrWhiteSpace(settings.EncryptedPassword))
+    {
+        return new EmailSendSettingsResolution(
+            "Saved email settings do not include an encrypted SMTP password/app password",
+            "saved",
+            null
+        );
+    }
+
+    string password;
+    try
+    {
+        var protector = dataProtectionProvider.CreateProtector("LocalCRM.UserEmailSettings.SmtpPassword.v1");
+        password = protector.Unprotect(settings.EncryptedPassword);
+    }
+    catch
+    {
+        return new EmailSendSettingsResolution(
+            "Saved SMTP password/app password could not be decrypted. Clear and re-save email settings for this user",
+            "saved",
+            null
+        );
+    }
+
+    return new EmailSendSettingsResolution(
+        "",
+        "saved",
+        new EmailSendSmtpSettings(
+            settings.SmtpHost.Trim(),
+            settings.SmtpPort,
+            settings.UseTls,
+            settings.FromEmail.Trim(),
+            settings.FromDisplayName.Trim(),
+            settings.Username.Trim(),
+            password
+        )
+    );
+}
+
+static bool HasSessionEmailSettings(SendEmailRequest input)
+{
+    return !string.IsNullOrWhiteSpace(input.SmtpHost) ||
+        !string.IsNullOrWhiteSpace(input.FromEmail) ||
+        !string.IsNullOrWhiteSpace(input.Username) ||
+        !string.IsNullOrWhiteSpace(input.Password);
+}
+
+static async Task<string> ValidateSendEmailRequestAsync(SendEmailRequest input, LocalCrmDbContext db, EmailSendSmtpSettings sendSettings)
+{
+    if (string.IsNullOrWhiteSpace(sendSettings.SmtpHost))
     {
         return "SMTP host is required";
     }
 
-    if (input.SmtpPort < 1 || input.SmtpPort > 65535)
+    if (sendSettings.SmtpPort < 1 || sendSettings.SmtpPort > 65535)
     {
         return "SMTP port must be between 1 and 65535";
     }
 
-    if (string.IsNullOrWhiteSpace(input.FromEmail))
+    if (string.IsNullOrWhiteSpace(sendSettings.FromEmail))
     {
         return "From email is required";
     }
 
-    if (!IsValidEmail(input.FromEmail.Trim()))
+    if (!IsValidEmail(sendSettings.FromEmail.Trim()))
     {
         return "A valid From email address is required";
     }
@@ -3478,7 +3601,7 @@ static async Task<string> ValidateSendEmailRequestAsync(SendEmailRequest input, 
         return "Email body cannot exceed 50000 characters";
     }
 
-    if (!string.IsNullOrWhiteSpace(input.Username) && string.IsNullOrWhiteSpace(input.Password))
+    if (!string.IsNullOrWhiteSpace(sendSettings.Username) && string.IsNullOrWhiteSpace(sendSettings.Password))
     {
         return "SMTP password is required when SMTP username is provided";
     }
@@ -5433,6 +5556,22 @@ public record UserEmailSettingsResponse(
     DateTime? UpdatedAtUtc
 );
 
+public record EmailSendSmtpSettings(
+    string SmtpHost,
+    int SmtpPort,
+    bool UseTls,
+    string FromEmail,
+    string FromDisplayName,
+    string Username,
+    string Password
+);
+
+public record EmailSendSettingsResolution(
+    string Error,
+    string Source,
+    EmailSendSmtpSettings? Settings
+);
+
 public record SendEmailRequest(
     string SmtpHost,
     int SmtpPort,
@@ -5447,7 +5586,8 @@ public record SendEmailRequest(
     string Subject,
     string Body,
     bool IsHtml,
-    Guid? GeneratedDocumentId
+    Guid? GeneratedDocumentId,
+    bool UseSavedEmailSettings
 );
 
 public record SendEmailResponse(
