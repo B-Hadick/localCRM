@@ -1,6 +1,6 @@
 LocalCRM — Full-Stack CRM System
 LocalCRM is a containerized, full-stack customer relationship management (CRM) system built with ASP.NET Core, PostgreSQL, and a React/Electron desktop client.
-This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, backend SMTP email sending, generated-document email attachments, CRM-aware email draft refinement, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
+This project demonstrates end-to-end system design, including API development, database persistence, frontend interaction, customer workflow modeling, quote workflow modeling, contract workflow modeling, scope-of-work workflow modeling, quote/contract/scope-of-work document generation, document-template management, template-backed document rendering, DOCX template import/export, generated document storage/download, session-only email workflow configuration, backend SMTP email sending, generated-document email attachments, CRM-aware email draft refinement, saved per-user email settings, encrypted SMTP credential storage, audit activity, backend-backed search, role-aware workflows, Owner/Admin/Staff permission hardening, JWT authentication, password hashing, approval workflows, dashboard reporting, password management, security-sensitive audit review, UI state handling, and containerized development environments.
 🚀 Tech Stack
 Backend
 ASP.NET Core (C#)
@@ -34,9 +34,12 @@ Browser-printable HTML document generation
 Server-side generated HTML document file creation
 Session-only email workflow configuration
 Backend SMTP email sending with session-supplied settings
+Saved per-user email configuration foundation
+Encrypted SMTP password/app-password storage
 Generated-document email attachment workflow
 CRM-aware email draft preparation
 Customer/document-context email prefill
+Owner/Admin per-user email settings management
 Current-vs-requested approval review data
 Dashboard summary endpoint
 Request queue filtering by status, requester, and date range
@@ -80,6 +83,8 @@ Session-only email settings workflow
 Backend email send workflow
 Generated-document email attachment workflow
 CRM-aware email recipient/subject/body prefill workflow
+Saved per-user email settings workflow
+Encrypted saved SMTP secret workflow
 Browser-based hard-copy printing and local PDF save workflow
 Current-vs-requested edit review UI
 Changed-field highlighting
@@ -94,6 +99,8 @@ Session-only email workflow settings panel
 Email send panel
 Generated-document attachment selection
 CRM-aware email prefill controls
+Saved email configuration status panel
+Admin/Owner email configuration panel
 Local session persistence with browser localStorage
 Infrastructure
 Docker
@@ -149,6 +156,7 @@ Owner users can manage document templates
 Owner users can import and export document templates
 Owner users can generate and download stored document files
 Owner users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
+Owner users can configure saved per-user email settings with encrypted SMTP passwords
 Admin users can create customers
 Admin users can directly edit customers
 Admin users can create Staff users
@@ -164,6 +172,7 @@ Admin users can manage document templates
 Admin users can import and export document templates
 Admin users can generate and download stored document files
 Admin users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
+Admin users can configure saved per-user email settings with encrypted SMTP passwords
 Admin users cannot create Admin or Owner users
 Staff users can create customers
 Staff users can view/search customers
@@ -178,6 +187,7 @@ Staff users can create scopes of work
 Staff users can view scope-of-work records
 Staff users can view and print scope-of-work documents
 Staff users can configure session-only email workflow settings and send email through explicit session-supplied SMTP settings
+Staff users can view whether their saved email configuration exists
 Staff users cannot directly edit customer records
 Staff users cannot view the global audit review panel
 Staff users cannot manage quote, contract, or scope-of-work status transitions
@@ -194,6 +204,7 @@ Backend enforces Admin/Owner-only contract status updates
 Backend enforces Admin/Owner-only scope-of-work status updates
 Backend enforces Admin/Owner-only document-template import/export
 Backend stores generated document files from authenticated document-generation workflows
+Backend stores saved per-user email settings with encrypted SMTP secrets
 Admin / Owner Dashboard
 Dashboard summary cards for operational workflow visibility
 Total customer count
@@ -509,7 +520,21 @@ Email send success is audit logged
 Email send failure is audit logged
 Email validation failure is audit logged
 Audit events do not expose SMTP passwords, usernames, full recipient lists, or message bodies
-Production persistent per-user email configuration remains planned for a later shippable-product layer
+Saved Per-User Email Configuration Foundation
+`UserEmailSettings` stores persistent per-user SMTP configuration metadata
+Saved configuration stores SMTP host, port, TLS setting, From email, display name, and username
+Saved SMTP password/app password is encrypted before storage
+Saved SMTP password/app password is never returned to the frontend
+Current user can see whether saved email settings are configured
+Owner/Admin users can create or update saved email settings for each user
+Owner/Admin users can clear saved email settings for each user
+Owner/Admin UI shows saved-password status without displaying the secret
+Owner/Admin users can copy saved non-secret settings to the session override form
+Session override workflow remains available for testing
+Saved email settings are visually separated from session-only override settings
+Saved email configuration save action is audit logged
+Saved email configuration clear action is audit logged
+Phase 15a adds saved configuration management only; `/email/send` still uses session-supplied SMTP settings until Phase 15b
 Search & Filtering
 Backend-backed customer search
 Search by name, email, phone, type, city, and state
@@ -563,6 +588,8 @@ Audit entries for generated document downloads
 Audit entries for email send success
 Audit entries for email send failure
 Audit entries for email send validation failure
+Audit entries for saved user email settings creation/update
+Audit entries for saved user email settings clearing
 User-aware audit activity from authenticated JWT claims
 Customer-specific audit activity panel
 Admin/Owner global audit review panel
@@ -616,6 +643,9 @@ Email draft/send state
 Generated-document email attachment state
 CRM-aware email prefill state
 Email selected-attachment state
+Saved email configuration status state
+Admin/Owner saved email settings form state
+Saved email settings validation state
 Email configuration validation state
 Email send validation state
 Account security form state
@@ -673,6 +703,11 @@ Generated Documents
 `POST /scopes-of-work/{scopeId}/generated-documents`
 Email
 `POST /email/send`
+Email Settings
+`GET /email-settings/me`
+`GET /email-settings/users/{userId}`
+`PUT /email-settings/users/{userId}`
+`POST /email-settings/users/{userId}/clear`
 Document Templates
 `GET /document-templates?documentType=&activeOnly=`
 `GET /document-templates/{templateId}`
@@ -724,6 +759,7 @@ Require a valid JWT bearer token:
 `POST /contracts/{contractId}/generated-documents`
 `POST /scopes-of-work/{scopeId}/generated-documents`
 `POST /email/send`
+`GET /email-settings/me`
 `POST /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/edit-requests`
 `GET /customers/{customerId}/notes`
@@ -733,6 +769,9 @@ Admin / Owner Routes
 Require a valid JWT bearer token with the `Admin` or `Owner` role:
 `GET /dashboard/summary`
 `GET /users`
+`GET /email-settings/users/{userId}`
+`PUT /email-settings/users/{userId}`
+`POST /email-settings/users/{userId}/clear`
 `PUT /customers/{id}`
 `POST /users/staff`
 `POST /users/{userId}/reset-password`
@@ -782,9 +821,12 @@ Default template selection and fallback document rendering
 Stored generated document artifact workflow
 Generated artifact email delivery workflow
 Session-only sensitive configuration workflow
+Saved per-user sensitive configuration foundation
+Encrypted SMTP secret storage workflow
 Session-supplied SMTP email sending workflow
 Generated-document email attachment workflow
 CRM-aware generated-document email preparation workflow
+Owner/Admin per-user email configuration workflow
 Browser-based hard-copy printing workflow
 Local PDF save workflow through browser print
 Staff-to-Admin approval workflow design
@@ -1883,6 +1925,93 @@ Confirm Phase 14b send/audit behavior still works.
 Confirm logout/session expiration/page refresh clears email settings and draft state.
 Important Phase 14c Boundary
 Phase 14c improves the frontend email workflow only. It does not add persistent email account linking, encrypted credential storage, or new backend send behavior.
+✅ Phase 15a — Completed
+Phase 15a added the saved per-user email configuration foundation while preserving the existing session-only email send workflow.
+Implemented
+`UserEmailSettings` model
+`UserEmailSettings` database table
+EF Core migration path for saved user email settings
+`DbSet<UserEmailSettings>` and model configuration
+ASP.NET Core Data Protection service registration
+Encrypted SMTP password/app-password storage
+Saved per-user SMTP configuration metadata:
+`UserId`
+`SmtpHost`
+`SmtpPort`
+`UseTls`
+`FromEmail`
+`FromDisplayName`
+`Username`
+`EncryptedPassword`
+`IsConfigured`
+`IsActive`
+`CreatedByEmail`
+`UpdatedByEmail`
+`CreatedAtUtc`
+`UpdatedAtUtc`
+`LastTestedAtUtc`
+`LastTestSucceeded`
+`LastTestMessage`
+Current-user email settings status endpoint:
+`GET /email-settings/me`
+Admin/Owner selected-user email settings status endpoint:
+`GET /email-settings/users/{userId}`
+Admin/Owner save/update user email settings endpoint:
+`PUT /email-settings/users/{userId}`
+Admin/Owner clear user email settings endpoint:
+`POST /email-settings/users/{userId}/clear`
+Vite proxy support for:
+`/email-settings`
+Frontend `UserEmailSettings` type
+Frontend `SavedEmailSettingsForm` type
+Current-user saved email configuration status panel
+Admin/Owner saved email configuration management panel
+User selector for per-user email settings
+Saved SMTP host/port/TLS/from/display-name/username form
+Saved SMTP password/app-password field
+Saved password status display
+Save User Email Settings action
+Clear Saved Settings action
+Copy Non-Secret Settings to Session action
+Saved email settings validation
+Current-user email settings loader
+Selected-user email settings loader
+Saved email settings save workflow
+Saved email settings clear workflow
+Saved non-secret settings copy-to-session workflow
+Session-only override workflow remains intact
+Existing Phase 14 email send workflow remains intact
+Security Boundary
+SMTP password/app-password is encrypted on the backend before storage.
+Saved SMTP password/app-password is never returned to the frontend.
+The frontend can see only whether a saved password exists.
+Admin/Owner users can save or clear per-user settings, but cannot retrieve saved secrets.
+Audit logs record configuration save/clear actions without exposing secret values.
+Session-only override remains available for testing and development.
+`/email/send` still uses session-supplied SMTP settings in Phase 15a. Saved config sending is planned for Phase 15b.
+Verified Flow
+Create `UserEmailSettings.cs`.
+Update `LocalCrmDbContext`.
+Create and apply the Phase 15a migration.
+Build and run the backend.
+Sign in as Owner or Admin.
+Confirm the Saved Email Configuration panel shows the current user's saved config status.
+Open Admin Email Configuration.
+Select a user.
+Enter SMTP host, port, TLS option, From email, display name, username, and password/app password.
+Click `Save User Email Settings`.
+Confirm the saved password field shows only backend-saved status.
+Refresh the page.
+Confirm saved configuration status persists.
+Confirm the password itself is not displayed.
+Click `Copy Non-Secret Settings to Session`.
+Confirm non-secret values copy into the session override form and password remains blank.
+Click `Clear Saved Settings`.
+Confirm saved settings are cleared.
+Confirm Audit Review shows `UserEmailSettingsSaved`.
+Confirm Audit Review shows `UserEmailSettingsCleared`.
+Important Phase 15a Boundary
+Phase 15a creates saved per-user email settings and encrypted credential storage. It does not yet make `/email/send` use saved credentials automatically. Phase 15b will update the send workflow to use saved config by default while keeping session override available.
 ---
 ⚙️ Running the Project
 Start PostgreSQL
@@ -1954,25 +2083,23 @@ STAFF_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -d '{"email":"staff@localcrm.dev","password":"Staff123!"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ```
-Manual Phase 14c Email Workflow Check
+Manual Phase 15a Saved Email Settings Check
 ```text
-1. Sign in through the frontend.
-2. Fill out Email Workflow Settings.
-3. Click Save Email Settings for Session.
-4. Select a customer with an email address.
-5. Generate a quote, contract, or scope-of-work file.
-6. Confirm the generated file auto-attaches to the email draft.
-7. Confirm recipient, subject, and body prefill when document/customer context is available.
-8. Click Email File on an existing generated document.
-9. Confirm the selected attachment display includes source-document context.
-10. Click Use Selected Customer Email and confirm the To field fills when available.
-11. Click Clear Attachment and confirm only the attachment is removed.
-12. Choose Plain Text or HTML body mode.
-13. Click Send Email.
-14. Confirm success or provider-specific failure feedback.
-15. Sign out and sign back in.
-16. Confirm email settings and draft fields are cleared.
-17. Refresh the browser and confirm SMTP settings do not persist.
+1. Sign in through the frontend as Owner or Admin.
+2. Confirm Saved Email Configuration shows current-user saved config status.
+3. Open Admin Email Configuration.
+4. Select a user.
+5. Enter SMTP host, port, TLS option, From email, display name, username, and password/app password.
+6. Click Save User Email Settings.
+7. Confirm the saved password field shows only backend-saved status.
+8. Refresh the browser.
+9. Confirm saved configuration status persists.
+10. Confirm the password itself is not displayed.
+11. Click Copy Non-Secret Settings to Session.
+12. Confirm non-secret values copy into the session override form and password remains blank.
+13. Click Clear Saved Settings.
+14. Confirm saved settings are cleared.
+15. Confirm Audit Review shows saved-settings save/clear events.
 ```
 Validate Email Send Endpoint Without Real SMTP
 Expected result is `400 Bad Request` because SMTP host is intentionally blank.
@@ -2385,6 +2512,31 @@ List All Stored Generated Documents
 curl -H "Authorization: Bearer $OWNER_TOKEN" \
   "http://localhost:8080/generated-documents"
 ```
+Get Current User Email Settings Status
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/email-settings/me
+```
+Save Email Settings for a User
+Replace `<USER_ID>` with an actual user ID from `GET /users`.
+```bash
+curl -i -X PUT http://localhost:8080/email-settings/users/<USER_ID> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -d '{"smtpHost":"smtp.example.com","smtpPort":587,"useTls":true,"fromEmail":"sender@example.com","fromDisplayName":"LocalCRM","username":"sender@example.com","password":"example-app-password","isActive":true}'
+```
+Get Email Settings for a User
+Replace `<USER_ID>` with an actual user ID from `GET /users`.
+```bash
+curl -H "Authorization: Bearer $OWNER_TOKEN" \
+  http://localhost:8080/email-settings/users/<USER_ID>
+```
+Clear Email Settings for a User
+Replace `<USER_ID>` with an actual user ID from `GET /users`.
+```bash
+curl -i -X POST http://localhost:8080/email-settings/users/<USER_ID>/clear \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
 Submit Customer Edit Request as Staff
 Replace `<CUSTOMER_ID>` with an actual customer ID.
 ```bash
@@ -2502,40 +2654,28 @@ localCRM/
 ```
 ---
 🔭 Next Planned Milestones
-Phase 14c:
-Frontend email workflow refinement
-Use Phase 14a/14b session-only email settings as the send configuration source
-Select a generated quote, contract, or scope-of-work document for emailing
-Pre-fill recipient from selected customer email when available
-Pre-fill subject/body from selected document context when available
-Improve selected-document attachment flow
-Show send success/failure state in the UI
-Refresh Audit Review after send attempts for Admin/Owner users
-Keep SMTP credentials in frontend memory only
-Clear email settings and draft state on logout/session expiration/page refresh
+Phase 15b:
+Use saved per-user email settings for email sending
+Update `/email/send` to use saved user configuration by default
+Decrypt saved SMTP password only inside the explicit send request
+Keep session override available for development/testing
+Never return saved secrets to the frontend
+Audit saved-config sends without exposing credentials
+Phase 15c:
+Frontend send workflow refinement for saved configuration
+Send email without manually re-entering SMTP settings when saved config exists
+Show saved-config active/inactive send readiness
+Keep session override available as an advanced/testing option
+Clear session override state on logout/session expiration/page refresh
 Later Phase:
-Phase 14d: Production email configuration hardening
-Owner/Admin per-user email workflow setup
-Persistent email configuration with secure storage
-Encrypted secrets or external secrets provider integration
-Per-user send configuration without repeatedly entering SMTP credentials
+Production email configuration hardening
+Optional provider-specific setup guidance
+Optional SMTP test endpoint
+Optional owner-managed per-user send policies
+Optional encrypted secret rotation workflow
 Later Phase:
 DOCX/PDF generated output expansion
 Later Phases
-Phase 15a:
-- Add UserEmailSettings model/table
-- Store SMTP host, port, TLS, from email, display name, username
-- Store encrypted SMTP password/app password
-- Add config status endpoint
-- Do not expose secret values in responses
-Phase 15b:
-- Owner/Admin create/update per-user email config
-- Owner/Admin clear/reset per-user email config
-- User can see whether they have email configured
-Phase 15c:
-- Update /email/send to use saved config by default
-- Optional session override remains available for development/testing
-- Frontend no longer requires SMTP fields when saved config exists
 Phase 16: Calendar/ICS export
 Phase 17: Requisition creation with conversion to Purchase Order, DOCX/PDF import/export, and physical hard-copy printing with sorting by requisition creator, requisition number, purchase order number, date, vendor name
 Phase 18: Accounts Payable tied to Requisitions/Purchase Orders and Accounts Receivable/Invoicing tied to Contracts, with markable `Paid`, `Due`, and `Unpaid` statuses tied to Calendar/ICS alerts. Accounts Payable sorting and searching by vendor name, requisition creator, requisition number, purchase order number, date. Accounts Receivable/Invoicing sorting and searching by customer name, customer address, customer phone number, invoice number, invoice status, contract number, date
@@ -2545,7 +2685,7 @@ Phase 21: Layout Clean-up and Streamlining. Tabbed sections for ease of navigati
 📌 Status
 Current milestone:
 ```text
-Phase 14c complete — CRM-aware email draft refinement, customer recipient prefill, quote/contract/scope-of-work subject/body prefill, Email File actions, clear attachment workflow, and session-only SMTP send behavior are working.
+Phase 15a complete — Saved per-user email settings, encrypted SMTP password storage, current-user saved-config status, Admin/Owner per-user email configuration management, clear saved-settings workflow, and non-secret copy-to-session behavior are working.
 ```
 ---
 👤 Author
